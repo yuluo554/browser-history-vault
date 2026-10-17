@@ -1,0 +1,210 @@
+{
+  "coverage": {
+    "counterexamples": 2,
+    "note": "抽样覆盖非穷举：本类只冻结下列具名样本，未覆盖的端点由规则驱动层用例另行覆盖",
+    "sampled": 8,
+    "total_in_db": 367
+  },
+  "families": [
+    {
+      "key": "A",
+      "members": 3,
+      "planted": true,
+      "term": "示例文章"
+    },
+    {
+      "key": "B",
+      "members": 3,
+      "planted": true,
+      "term": "样本记录"
+    },
+    {
+      "key": "C",
+      "members": 4,
+      "planted": true,
+      "term": "资料汇编"
+    },
+    {
+      "key": "E",
+      "members": 1,
+      "planted": true,
+      "term": "孤立词族"
+    },
+    {
+      "key": "F",
+      "members": 2,
+      "planted": true,
+      "term": "档案索引"
+    },
+    {
+      "key": "D",
+      "members": 22,
+      "planted": false,
+      "term": "日常浏览"
+    }
+  ],
+  "kind": "topics",
+  "params": {
+    "min_df": 2,
+    "ngram_n": 2
+  },
+  "rule": "主题词族：字面包含词族的 URL 为成员；df ≥ cluster.min_df 才可成为分组依据（权重与排序由模块④决定，此处不冻结）",
+  "samples": [
+    {
+      "counterexample": false,
+      "expected": {
+        "df": 3,
+        "dropped": false,
+        "member_urls": [
+          "https://topic-a.example.test/a-001",
+          "https://topic-a.example.test/a-002",
+          "https://topic-a.example.test/a-003"
+        ]
+      },
+      "id": "topics-term-a",
+      "input": {
+        "min_df": 2,
+        "term": "示例文章"
+      },
+      "reason": "词族『示例文章』出现在 3 个 URL 上：df ≥ min_df 才可成为分组依据，df < min_df 的词必须被丢弃（不得靠一个孤立词成组）"
+    },
+    {
+      "counterexample": false,
+      "expected": {
+        "df": 3,
+        "dropped": false,
+        "member_urls": [
+          "https://topic-b.example.test/b-001",
+          "https://topic-b.example.test/b-002",
+          "https://topic-b.example.test/b-003"
+        ]
+      },
+      "id": "topics-term-b",
+      "input": {
+        "min_df": 2,
+        "term": "样本记录"
+      },
+      "reason": "词族『样本记录』出现在 3 个 URL 上：df ≥ min_df 才可成为分组依据，df < min_df 的词必须被丢弃（不得靠一个孤立词成组）"
+    },
+    {
+      "counterexample": false,
+      "expected": {
+        "df": 4,
+        "dropped": false,
+        "member_urls": [
+          "https://topic-c1.example.test/c-001",
+          "https://topic-c1.example.test/c-003",
+          "https://topic-c2.example.test/c-002",
+          "https://topic-c2.example.test/c-004"
+        ]
+      },
+      "id": "topics-term-c",
+      "input": {
+        "min_df": 2,
+        "term": "资料汇编"
+      },
+      "reason": "词族『资料汇编』出现在 4 个 URL 上：df ≥ min_df 才可成为分组依据，df < min_df 的词必须被丢弃（不得靠一个孤立词成组）"
+    },
+    {
+      "counterexample": true,
+      "expected": {
+        "df": 1,
+        "dropped": true,
+        "member_urls": [
+          "https://topic-e.example.test/e-001"
+        ]
+      },
+      "id": "topics-term-e",
+      "input": {
+        "min_df": 2,
+        "term": "孤立词族"
+      },
+      "reason": "词族『孤立词族』出现在 1 个 URL 上：df ≥ min_df 才可成为分组依据，df < min_df 的词必须被丢弃（不得靠一个孤立词成组）"
+    },
+    {
+      "counterexample": false,
+      "expected": {
+        "df": 2,
+        "dropped": false,
+        "member_urls": [
+          "https://topic-f.example.test/f-001",
+          "https://topic-f.example.test/f-002"
+        ]
+      },
+      "id": "topics-term-f",
+      "input": {
+        "min_df": 2,
+        "term": "档案索引"
+      },
+      "reason": "词族『档案索引』出现在 2 个 URL 上：df ≥ min_df 才可成为分组依据，df < min_df 的词必须被丢弃（不得靠一个孤立词成组）"
+    },
+    {
+      "counterexample": false,
+      "expected": {
+        "df": 22,
+        "dropped": false,
+        "member_urls": [
+          "https://blog.example.org/item-002",
+          "https://books.example.org/note-003",
+          "https://code.example.invalid/post-001",
+          "https://demo.example.org/note-002",
+          "https://finance.example.test/post-002",
+          "https://forum.example.org/doc-002",
+          "https://game.example.org/entry-001",
+          "https://health.example.com/item-002",
+          "https://lab.example.net/thread-001",
+          "https://learn.example.org/entry-003",
+          "https://maps.example.test/doc-001",
+          "https://mesh.example.invalid/thread-002",
+          "https://music.example.org/thread-003",
+          "https://news.example.test/thread-002",
+          "https://papers.example.net/entry-001",
+          "https://radio.example.invalid/doc-001",
+          "https://recipe.example.com/entry-002",
+          "https://shop.example.test/post-003",
+          "https://travel.example.org/note-002",
+          "https://video.example.com/thread-002",
+          "https://weather.example.org/item-002",
+          "https://wiki.example.invalid/post-002"
+        ]
+      },
+      "id": "topics-term-d",
+      "input": {
+        "min_df": 2,
+        "term": "日常浏览"
+      },
+      "reason": "词族『日常浏览』出现在 22 个 URL 上：df ≥ min_df 才可成为分组依据，df < min_df 的词必须被丢弃（不得靠一个孤立词成组）"
+    },
+    {
+      "counterexample": false,
+      "expected": {
+        "df": 4,
+        "grouped_together": true,
+        "member_domains": [
+          "topic-c1.example.test",
+          "topic-c2.example.test"
+        ]
+      },
+      "id": "topics-cross-domain-same-term",
+      "input": {
+        "min_df": 2,
+        "term": "资料汇编"
+      },
+      "reason": "同一词族落在两个不同域名上 → 仍应归入同一分组（分组依据是词族，不是域名）"
+    },
+    {
+      "counterexample": true,
+      "expected": {
+        "df": 1,
+        "dropped": true
+      },
+      "id": "topics-isolated-term-dropped",
+      "input": {
+        "min_df": 2,
+        "term": "孤立词族"
+      },
+      "reason": "只出现 1 次的词（df=1 < min_df=2）不得成为分组依据（反例：min_df 过滤失效会在这里红）"
+    }
+  ],
+  "schema_version": 1
+}

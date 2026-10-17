@@ -1,0 +1,251 @@
+{
+  "coverage": {
+    "counterexamples": 1,
+    "note": "抽样覆盖非穷举：本类只冻结下列具名样本，未覆盖的端点由规则驱动层用例另行覆盖",
+    "sampled": 8,
+    "total_in_db": 367
+  },
+  "expected_session_total": 288,
+  "kind": "sessions",
+  "params": {
+    "coverage_boundary": "本套数据只含单一 profile（Default）；分 profile 的隔离由模块③的规则层用例覆盖",
+    "gap_minutes": 30,
+    "timezone_utc_offset_minutes": 480
+  },
+  "rule": "同一来源的访问按时间升序，相邻间隔**严格大于** session_gap_minutes 才切分为新会话（恰好等于不切分）",
+  "samples": [
+    {
+      "counterexample": true,
+      "expected": {
+        "session_count": 1,
+        "session_sizes": [
+          2
+        ]
+      },
+      "id": "sess-exact-boundary-does-not-split",
+      "input": {
+        "gap_minutes": 30,
+        "offsets_seconds": [
+          0,
+          1800
+        ],
+        "sources": [
+          "chrome",
+          "chrome"
+        ],
+        "urls": [
+          "https://planted-session.example.test/exact/step-1",
+          "https://planted-session.example.test/exact/step-2"
+        ]
+      },
+      "reason": "相邻间隔**恰好等于**配置间隔 → 严格大于才切分 → 同一会话（口径边界的内侧反例）"
+    },
+    {
+      "counterexample": false,
+      "expected": {
+        "session_count": 1,
+        "session_sizes": [
+          2
+        ]
+      },
+      "id": "sess-minus-one-second-does-not-split",
+      "input": {
+        "gap_minutes": 30,
+        "offsets_seconds": [
+          0,
+          1799
+        ],
+        "sources": [
+          "chrome",
+          "chrome"
+        ],
+        "urls": [
+          "https://planted-session.example.test/minus/step-1",
+          "https://planted-session.example.test/minus/step-2"
+        ]
+      },
+      "reason": "比间隔少 1 秒 → 同一会话"
+    },
+    {
+      "counterexample": false,
+      "expected": {
+        "session_count": 2,
+        "session_sizes": [
+          1,
+          1
+        ]
+      },
+      "id": "sess-plus-one-second-splits",
+      "input": {
+        "gap_minutes": 30,
+        "offsets_seconds": [
+          0,
+          1801
+        ],
+        "sources": [
+          "chrome",
+          "chrome"
+        ],
+        "urls": [
+          "https://planted-session.example.test/plus/step-1",
+          "https://planted-session.example.test/plus/step-2"
+        ]
+      },
+      "reason": "比间隔多 1 秒 → 切分为两个会话（边界外侧正例）"
+    },
+    {
+      "counterexample": false,
+      "expected": {
+        "session_count": 1,
+        "session_sizes": [
+          2
+        ]
+      },
+      "id": "sess-same-instant-two-urls",
+      "input": {
+        "gap_minutes": 30,
+        "offsets_seconds": [
+          0,
+          0
+        ],
+        "sources": [
+          "chrome",
+          "chrome"
+        ],
+        "urls": [
+          "https://planted-session.example.test/instant/step-1",
+          "https://planted-session.example.test/instant/step-2"
+        ]
+      },
+      "reason": "同一微秒的两条不同 URL 访问 → 同一会话（同刻不切分）"
+    },
+    {
+      "counterexample": false,
+      "expected": {
+        "session_count": 1,
+        "session_sizes": [
+          5
+        ]
+      },
+      "id": "sess-five-step-chain",
+      "input": {
+        "gap_minutes": 30,
+        "offsets_seconds": [
+          0,
+          100,
+          200,
+          1799,
+          3599
+        ],
+        "sources": [
+          "chrome",
+          "chrome",
+          "chrome",
+          "chrome",
+          "chrome"
+        ],
+        "urls": [
+          "https://planted-session.example.test/chain/step-1",
+          "https://planted-session.example.test/chain/step-2",
+          "https://planted-session.example.test/chain/step-3",
+          "https://planted-session.example.test/chain/step-4",
+          "https://planted-session.example.test/chain/step-5"
+        ]
+      },
+      "reason": "逐步间隔都不超过间隔（含恰好等于）→ 5 步同一会话（链路不因边界值断裂）"
+    },
+    {
+      "counterexample": false,
+      "expected": {
+        "session_count": 2,
+        "session_sizes": [
+          2,
+          2
+        ]
+      },
+      "id": "sess-two-splits",
+      "input": {
+        "gap_minutes": 30,
+        "offsets_seconds": [
+          0,
+          1800,
+          3601,
+          4501
+        ],
+        "sources": [
+          "chrome",
+          "chrome",
+          "chrome",
+          "chrome"
+        ],
+        "urls": [
+          "https://planted-session.example.test/splits/step-1",
+          "https://planted-session.example.test/splits/step-2",
+          "https://planted-session.example.test/splits/step-3",
+          "https://planted-session.example.test/splits/step-4"
+        ]
+      },
+      "reason": "第二个间隔超限切分、第三个不超限 → 2 个会话各 2 步（切分只由相邻间隔决定）"
+    },
+    {
+      "counterexample": false,
+      "expected": {
+        "session_count": 2,
+        "session_sizes": [
+          1,
+          1
+        ]
+      },
+      "id": "sess-cross-source-separate",
+      "input": {
+        "gap_minutes": 30,
+        "offsets_seconds": [
+          0,
+          1
+        ],
+        "sources": [
+          "chrome",
+          "edge"
+        ],
+        "urls": [
+          "https://planted-session.example.test/cross/step-1",
+          "https://planted-session.example.test/cross/step-2"
+        ]
+      },
+      "reason": "相邻 1 秒但**来源不同**（chrome / edge）→ 会话按来源分组，同源才跨时间合并"
+    },
+    {
+      "counterexample": false,
+      "expected": {
+        "session_count": 1,
+        "session_sizes": [
+          4
+        ]
+      },
+      "id": "sess-four-url-one-session",
+      "input": {
+        "gap_minutes": 30,
+        "offsets_seconds": [
+          0,
+          60,
+          120,
+          1800
+        ],
+        "sources": [
+          "chrome",
+          "chrome",
+          "chrome",
+          "chrome"
+        ],
+        "urls": [
+          "https://planted-session.example.test/four/step-1",
+          "https://planted-session.example.test/four/step-2",
+          "https://planted-session.example.test/four/step-3",
+          "https://planted-session.example.test/four/step-4"
+        ]
+      },
+      "reason": "4 步连续访问（末段恰好等于间隔）→ 同一会话"
+    }
+  ],
+  "schema_version": 1
+}

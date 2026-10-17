@@ -12,19 +12,29 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from . import __version__
+from . import reference
 from .commands import DELIVERED_COMMANDS, all_commands
 from .config import ConfigError, json_bytes, load_config, resolve_data_root
 from .exit_codes import EXIT_DEGRADED, EXIT_OK
 from . import netguard
 
-#: 数据底座必需资产（相对 data root）。M1 起会随冻结 fixtures 追加，
-#: 追加是"动了会打挂测试"的口径变更：须同步 plan/05 与 data/README.md。
-REQUIRED_DATA_ASSETS: Tuple[str, ...] = ("README.md",)
+#: 合成 fixtures 的固定落点（相对 data root）。
+FIXTURE_DIR = "fixtures/synthetic"
+FIXTURE_MANIFEST_REL = FIXTURE_DIR + "/manifest.json"
+FIXTURE_KIND = "browser-history-vault/synthetic-fixture"
+
+#: 数据底座必需资产（相对 data root）。M1 起加入**冻结 fixtures 台账**：
+#: 让"用户真敲的那条命令"（`bhvault selftest`）必须真读它——否则"台账冻结"只是测试内部
+#: 的事，被改坏的 fixtures 照样能全绿跑过（plan/05 §8）。
+#: 追加是"动了会打挂测试"的口径变更：须同步 plan/K-口径清单.md（K29）、plan/05 §8 与 data/README.md。
+REQUIRED_DATA_ASSETS: Tuple[str, ...] = ("README.md", FIXTURE_MANIFEST_REL)
 
 
 @dataclass(frozen=True)
@@ -110,6 +120,89 @@ def _check_privacy(loaded: Optional[object]) -> CheckResult:
     return CheckResult("config-privacy", True, "私密域名清单 %d 项（默认排除生效）" % len(private))
 
 
+def verify_data_ledger(root: Optional[Path]) -> CheckResult:
+    """台账与盘上产物一致 + 真值可由**参照实现**复算（M1 起的新检查项）。
+
+    这一项存在的意义（plan/05 §8）：manifest 不能只是测试的输入；用户敲的
+    `bhvault selftest --data-root data` 必须真读它并**真复算**，否则台账冻结只是
+    仓库内部的事——把 fixtures 改坏（或把真值手改成"看起来对"的值）照样能全绿。
+    复算用的是 `reference.py`（与生成器各自独立实现），因此两边对不上就会在这里红。
+
+    公开成 `verify_data_ledger` 而不只是内部检查：`tools/bench.py` 的 B0 套件也读它
+    （同一份判定不写两遍）。
+    """
+    if root is None:
+        return CheckResult("data-ledger", False, "数据底座目录不可用，无法核对 fixtures 台账")
+    fixture = root / FIXTURE_DIR
+    manifest_path = fixture / "manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        return CheckResult("data-ledger", False, "读不到 fixtures 台账 %s：%s" % (manifest_path, exc))
+    except ValueError as exc:
+        return CheckResult("data-ledger", False, "fixtures 台账不是合法 JSON：%s（%s）" % (manifest_path, exc))
+    if manifest.get("kind") != FIXTURE_KIND:
+        return CheckResult("data-ledger", False, "台账 kind 不符：%r（期望 %s）" % (manifest.get("kind"), FIXTURE_KIND))
+
+    problems: List[str] = []
+    frozen = [entry for entry in manifest.get("artifacts", []) if entry.get("frozen")]
+    if not frozen:
+        problems.append("台账没有登记任何冻结产物（空台账会被读成『一切正常』）")
+    for entry in frozen:
+        path = fixture / str(entry.get("path"))
+        if not path.is_file():
+            problems.append("%s 缺失" % entry.get("path"))
+            continue
+        payload = path.read_bytes()
+        digest = hashlib.sha256(payload).hexdigest()
+        if digest != entry.get("sha256"):
+            problems.append("%s sha256 不符（台账拿不到一致内容）" % entry.get("path"))
+            continue
+        lines = len(payload.split(b"\n")) - 1
+        if lines != entry.get("lines"):
+            problems.append("%s 行数不符（盘上 %d，台账 %d）" % (entry.get("path"), lines, entry.get("lines")))
+
+    recomputed = 0
+    try:
+        rows = reference.load_canonical(fixture / "canonical" / "visits.jsonl")
+        kinds = [str(entry["kind"]) for entry in manifest.get("assumptions", [])]
+        if not kinds:
+            problems.append("台账没有登记任何真值类别")
+        truth_text = "".join(
+            (fixture / "assumptions" / ("%s.json" % kind)).read_text(encoding="utf-8") for kind in kinds
+        )
+        if "observed" in truth_text.lower():
+            problems.append("真值库出现 observed 一类字段（真值只存输入与期望，冻结观测会让基准整体失效）")
+        params = dict(manifest["source_config"]["params"])
+        params["anchor_local_date"] = manifest["anchor_local_date"]
+        audit = reference.audit_truth_tree(fixture / "assumptions", rows, params=params, kinds=kinds)
+        recomputed = int(audit["checked_samples"])
+        if audit["mismatches"]:
+            first = audit["mismatches"][0]
+            problems.append(
+                "真值复算不一致 %d 处（例：%s/%s 的 %s：台账 %r，参照实现 %r）"
+                % (len(audit["mismatches"]), first["kind"], first["sample_id"], first["key"],
+                   first["expected"], first["derived"])
+            )
+        if audit["file_level_mismatches"]:
+            problems.append("真值文件级期望与复算不一致：%s" % audit["file_level_mismatches"][:3])
+        totals = manifest.get("totals", {})
+        if totals.get("visits") != len(rows):
+            problems.append("台账登记 %s 条 visit，盘上规范化导出 %d 条" % (totals.get("visits"), len(rows)))
+    except (reference.CanonicalError, KeyError, TypeError, OSError) as exc:
+        # OSError 也记成**自检结论**：盘上产物缺失属于"数据底座不完整"（退出码 1），
+        # 不是"用户用法错误"（退出码 2）。把两者混成一个码，会让"我数据坏了"读成"我命令敲错了"。
+        problems.append("真值复算无法进行：%s" % exc)
+
+    if problems:
+        return CheckResult("data-ledger", False, "；".join(problems[:4]))
+    return CheckResult(
+        "data-ledger",
+        True,
+        "台账 %d 件冻结产物的 sha256/行数一致；%d 条真值经参照实现复算一致" % (len(frozen), recomputed),
+    )
+
+
 def _check_data_root(explicit: Optional[str]) -> "Tuple[CheckResult, Optional[Path]]":
     root = resolve_data_root(explicit)
     if root is None:
@@ -150,6 +243,7 @@ def run_selftest(config_path: Optional[str] = None, data_root: Optional[str] = N
 
     data_check, root = _check_data_root(data_root)
     checks.append(data_check)
+    checks.append(verify_data_ledger(root))
     checks.append(_check_offline_source())
 
     return SelftestReport(
@@ -173,10 +267,14 @@ def render_report(report: SelftestReport) -> str:
 
 __all__ = [
     "CheckResult",
+    "FIXTURE_DIR",
+    "FIXTURE_KIND",
+    "FIXTURE_MANIFEST_REL",
     "REQUIRED_DATA_ASSETS",
     "SelftestReport",
     "render_report",
     "run_selftest",
+    "verify_data_ledger",
     "EXIT_DEGRADED",
     "EXIT_OK",
 ]

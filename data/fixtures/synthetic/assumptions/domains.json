@@ -1,0 +1,86 @@
+{
+  "coverage": {
+    "counterexamples": 2,
+    "note": "抽样覆盖非穷举：本类只冻结下列具名样本，未覆盖的端点由规则驱动层用例另行覆盖",
+    "sampled": 4,
+    "total_in_db": 367
+  },
+  "expected_denominator": 335,
+  "kind": "domains",
+  "params": {
+    "private_domains": [
+      "localhost",
+      "127.0.0.1",
+      "mail.google.com",
+      "outlook.live.com",
+      "mail.qq.com",
+      "private.example.invalid"
+    ],
+    "sensitive_domains": [
+      "sensitive.example.test"
+    ]
+  },
+  "rule": "域名集中度：按访问**记录数**聚合；分子 = 该域名记录数，分母 = 全部**非私密**访问记录数；并列时域名升序",
+  "samples": [
+    {
+      "counterexample": false,
+      "expected": {
+        "denominator": 335,
+        "numerator": 5
+      },
+      "id": "domains-numerator-and-denominator",
+      "input": {
+        "domain": "conc-a.example.test"
+      },
+      "reason": "集中度必须同时给分子与分母：分母 = 全部**非私密**访问记录数（敏感保留在分母内）"
+    },
+    {
+      "counterexample": true,
+      "expected": {
+        "candidate_order": [
+          "conc-a.example.test",
+          "conc-b.example.test",
+          "conc-single.example.test"
+        ]
+      },
+      "id": "domains-tie-break-order",
+      "input": {
+        "candidates": [
+          "conc-a.example.test",
+          "conc-b.example.test",
+          "conc-single.example.test"
+        ]
+      },
+      "reason": "并列访问次数时次序由显式次排序键决定（次数降序 → 域名升序），不由容器物理序决定"
+    },
+    {
+      "counterexample": true,
+      "expected": {
+        "denominator_excludes_private": true,
+        "private_hosts_absent_from_ranking": true
+      },
+      "id": "domains-private-excluded",
+      "input": {
+        "private_hosts": [
+          "localhost",
+          "127.0.0.1",
+          "mail.private.example.invalid"
+        ]
+      },
+      "reason": "私密域名既不得进域名榜、也不得进分母；若被计入，分母与名次都会漂移（反例）"
+    },
+    {
+      "counterexample": false,
+      "expected": {
+        "denominator": 335,
+        "numerator": 1
+      },
+      "id": "domains-single-visit-host",
+      "input": {
+        "domain": "conc-single.example.test"
+      },
+      "reason": "单次访问的域名：分子为 1，占比的分母仍是全库（不是该域名自己的计数）"
+    }
+  ],
+  "schema_version": 1
+}

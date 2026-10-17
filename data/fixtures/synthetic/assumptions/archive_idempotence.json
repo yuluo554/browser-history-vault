@@ -1,0 +1,54 @@
+{
+  "coverage": {
+    "counterexamples": 2,
+    "note": "抽样覆盖非穷举：本类只冻结下列具名样本，未覆盖的端点由规则驱动层用例另行覆盖",
+    "sampled": 3,
+    "total_in_db": 367
+  },
+  "kind": "archive_idempotence",
+  "params": {
+    "snapshot_source": "chrome/History 与 chrome-running/（chrome-running 主库缺最新 7 条，最新记录只在未折叠的 -wal 里）"
+  },
+  "rule": "同一份快照连跑：第二次 visits_added == 0；行数与 url_id 映射不变；原库 mtime 与字节不变；分批与重排不影响幂等",
+  "samples": [
+    {
+      "counterexample": true,
+      "expected": {
+        "second_run_visits_added_zero": true,
+        "visits_added_per_run": [
+          367,
+          0
+        ]
+      },
+      "id": "idem-same-snapshot-twice",
+      "input": {
+        "runs": 2
+      },
+      "reason": "同一快照连跑两次：首次写入 = 记录数，第二次必须**计数归零**（不是「没报错」）"
+    },
+    {
+      "counterexample": false,
+      "expected": {
+        "duplicate_rows": 0,
+        "visits_added_total": 367
+      },
+      "id": "idem-batched-first-run",
+      "input": {
+        "batches": 3
+      },
+      "reason": "分批归档与一次归档总量相同、无重复行（分批不得因边界重叠而多写）"
+    },
+    {
+      "counterexample": true,
+      "expected": {
+        "visits_added": 0
+      },
+      "id": "idem-reordered-batches",
+      "input": {
+        "order": "deterministic_permutation"
+      },
+      "reason": "按不同批次顺序重放同一份快照 → 仍 0 新增（幂等不依赖输入顺序）"
+    }
+  ],
+  "schema_version": 1
+}

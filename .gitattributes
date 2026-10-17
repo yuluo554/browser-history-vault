@@ -15,3 +15,10 @@
 *.db    binary
 *.sqlite binary
 *.sqlite3 binary
+
+# 合成 Chrome/Edge 库：无扩展名（真实浏览器就是这个名字），且被 .gitignore 白名单放行，
+# 因此**必须**在这里显式声明为二进制——否则 CRLF 归一（* text=auto eol=lf）会改写 SQLite 字节。
+data/fixtures/synthetic/**/History     binary
+data/fixtures/synthetic/**/History-wal binary
+# 规范化导出与真值是文本，按 LF 归一（与 generation 侧的字节冻结口径一致）。
+data/fixtures/synthetic/**/*.jsonl     text eol=lf

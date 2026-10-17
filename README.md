@@ -1,6 +1,6 @@
 # browser-history-vault（浏览器历史本地知识库）
 
-**状态：开发中（计划与骨架阶段）** —— 题面与计划见 [plan/00-README总览.md](plan/00-README总览.md)，本版本只交付骨架与自检命令，五个功能模块按里程碑逐个落地。
+**状态：开发中（数据底座已就位，功能模块逐个落地）** —— 题面与计划见 [plan/00-README总览.md](plan/00-README总览.md)。本版本已交付**骨架、自检命令**与**可复跑的合成数据底座**（合成 History 库 + 植入真值 + 基准骨架），五个功能模块按里程碑逐个落地。
 
 浏览器只替你留 **90 天**历史，然后静默删除。本工具做「**先归档、再分析**」：首次运行把本地 `History` 的**只读快照**沉淀成自己的长期档案，之后回答「我过去在做什么」「哪些是遗忘的宝藏」「我的作息与兴趣怎么变」。
 
@@ -85,7 +85,17 @@ bhvault selftest --data-root data
 
 ## 数据与合成样本
 
-`data/` 存放**依据查证台账**与（M1 起）程序化生成的合成 `History` 库与植入真值：假域名白名单、可复跑的生成器、位级一致守门。口径与纪律见 [data/README.md](data/README.md)。**真实浏览历史、真实 `History` 文件永不入仓**。
+`data/` 存放**依据查证台账**、**程序化生成的合成 `History` 库**与**植入真值**：假域名白名单（RFC 2606/6761 保留域，无任何真实站点）、固定种子 + 自研确定性 RNG、可一键复跑的生成器、位级一致守门。口径与纪律见 [data/README.md](data/README.md) §3，台账见 [data/fixtures/synthetic/manifest.json](data/fixtures/synthetic/manifest.json)。
+
+**真实浏览历史、真实 `History` 文件永不入仓**（`.gitignore` 封死，只白名单放行 `data/fixtures/synthetic/**`）。
+
+合成底座现状（全部可复跑）：367 条 visit / 151 个 URL / 61 个主机 / 2 个来源（Chrome + Edge 各一份库，另有一份"浏览器运行中"的带 `-wal` 变体）；九类**植入真值**共 68 条样本（含 26 条反例：恰好等于阈值的、只差一天的、次数不足的、私密命中的、形似而非的……）。
+
+```bash
+py -3.12 tools/gen_synthetic_history.py --check      # 两层断言：冻结产物形态 + 重生成逐字节一致
+py -3.12 tools/bench.py --only B0                    # 基准：真值可由独立参照实现复算（门槛从台账读）
+py -3.12 tools/bench.py --probe --only B0            # 可证伪探活：注入缺陷 → 必须报未达标
+```
 
 ## 局限与已知问题
 
@@ -100,11 +110,17 @@ bhvault selftest --data-root data
 
 ```bash
 python -m pytest -q                                  # 全量测试
+py -3.12 tools/gen_synthetic_history.py --check       # 合成数据两层断言（形态 + 重生成逐字节）
+py -3.12 tools/bench.py --only B0                     # 基准（B1–B5 待各自模块落地后启用）
 py -3.12 tools/smoke_cli.py --require-console-script  # 离线 CLI 冒烟（两条通路 × 已交付命令）
 py -3.12 tools/check_release.py . --no-gh             # 发布终态门禁（发布前本来就该红）
 ```
 
 IDE 与解释器：底线 **Python 3.8**，已在 3.8 与 3.12 两条通道跑全量测试。
+
+改了 `tools/gen_synthetic_history.py` 或 `config.example.json` 之后要**重生成** fixtures
+（`py -3.12 tools/gen_synthetic_history.py`）：台账记录了生成器与口径文件的 sha256，
+不重生成时 `--check` 会红——这是刻意的（把"改了生成器没重生成数据"变成显式动作）。
 
 ## 许可
 

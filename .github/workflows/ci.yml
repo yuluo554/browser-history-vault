@@ -37,6 +37,17 @@ jobs:
       - name: 全量测试（双解释器矩阵）
         run: python -m pytest
 
+      # 合成数据是"可复跑的测量"的地基：两层断言（冻结产物形态 + 重生成逐字节一致）
+      # 必须在**矩阵的每个解释器**上都过——否则"逐字节一致"就只是本机运气。
+      - name: 合成数据两层断言（形态 + 重生成逐字节一致）
+        run: python tools/gen_synthetic_history.py --check
+
+      # 基准骨架。刻意用 --only 列出**已启用**套件：
+      # 未启用套件按设计计入退出码 1（未启用 ≠ 通过），直接跑全量会把正常提交跑红。
+      # 每交付一个模块就把它的套件从 manifest 翻成 enabled，并加进这里的命令行。
+      - name: 基准（已启用套件；门槛从 manifest 读）
+        run: python tools/bench.py --only B0
+
       # 这一步覆盖裸 console script 通路：`python -m <pkg>` 与裸 `<pkg>` 的 sys.path
       # 来源不同，"前者过了"证明不了"后者能跑"（安装面第四面）。--require-console-script
       # 让"console script 没进 PATH"变红，而不是静默 SKIP。

@@ -1,0 +1,146 @@
+{
+  "coverage": {
+    "counterexamples": 3,
+    "note": "抽样覆盖非穷举：本类只冻结下列具名样本，未覆盖的端点由规则驱动层用例另行覆盖",
+    "sampled": 8,
+    "total_in_db": 367
+  },
+  "excluded_visit_count": 32,
+  "kind": "privacy",
+  "masked_hosts": [
+    "sensitive.example.test",
+    "vault.sensitive.example.test"
+  ],
+  "masked_visit_count": 9,
+  "must_appear_hosts": [
+    "localhost.example.test",
+    "mysensitive.example.test",
+    "notprivate.example.invalid"
+  ],
+  "note": "私密零出现 / 敏感打码的断言目标（M5 门禁消费）；计数为访问**记录数**",
+  "params": {
+    "private_domains": [
+      "localhost",
+      "127.0.0.1",
+      "mail.google.com",
+      "outlook.live.com",
+      "mail.qq.com",
+      "private.example.invalid"
+    ],
+    "sensitive_domains": [
+      "sensitive.example.test"
+    ]
+  },
+  "rule": "私密域名（精确主机或清单项子域）→ 全部输出零出现、不进统计；敏感域名 → 保留统计但打码；两者语义不同",
+  "samples": [
+    {
+      "counterexample": false,
+      "expected": {
+        "classification": "private",
+        "counted_in_statistics": false,
+        "must_not_appear_in_output": true
+      },
+      "id": "privacy-private-localhost",
+      "input": {
+        "host": "localhost"
+      },
+      "reason": "私密域名（精确主机或清单项子域）→ 输出中零出现、连统计都不进"
+    },
+    {
+      "counterexample": false,
+      "expected": {
+        "classification": "private",
+        "counted_in_statistics": false,
+        "must_not_appear_in_output": true
+      },
+      "id": "privacy-private-127-0-0-1",
+      "input": {
+        "host": "127.0.0.1"
+      },
+      "reason": "私密域名（精确主机或清单项子域）→ 输出中零出现、连统计都不进"
+    },
+    {
+      "counterexample": false,
+      "expected": {
+        "classification": "private",
+        "counted_in_statistics": false,
+        "must_not_appear_in_output": true
+      },
+      "id": "privacy-private-mail-private-example-invalid",
+      "input": {
+        "host": "mail.private.example.invalid"
+      },
+      "reason": "私密域名（精确主机或清单项子域）→ 输出中零出现、连统计都不进"
+    },
+    {
+      "counterexample": false,
+      "expected": {
+        "classification": "sensitive",
+        "counted_in_statistics": true,
+        "masked": true,
+        "raw_host_must_not_appear": true
+      },
+      "id": "privacy-sensitive-sensitive-example-test",
+      "input": {
+        "host": "sensitive.example.test"
+      },
+      "reason": "敏感域名与私密是两回事：**保留统计**，仅打码显示（原主机名不得原样出现）"
+    },
+    {
+      "counterexample": false,
+      "expected": {
+        "classification": "sensitive",
+        "counted_in_statistics": true,
+        "masked": true,
+        "raw_host_must_not_appear": true
+      },
+      "id": "privacy-sensitive-vault-sensitive-example-test",
+      "input": {
+        "host": "vault.sensitive.example.test"
+      },
+      "reason": "敏感域名与私密是两回事：**保留统计**，仅打码显示（原主机名不得原样出现）"
+    },
+    {
+      "counterexample": true,
+      "expected": {
+        "classification": "public",
+        "must_appear_in_output": true
+      },
+      "id": "privacy-lookalike-localhost-example-test",
+      "input": {
+        "host": "localhost.example.test"
+      },
+      "reason": "形似反例：不是清单项的精确主机、也不是其子域 → 必须按公开处理（子串匹配的实现会误排除 → 红）"
+    },
+    {
+      "counterexample": true,
+      "expected": {
+        "classification": "public",
+        "must_appear_in_output": true
+      },
+      "id": "privacy-lookalike-notprivate-example-invalid",
+      "input": {
+        "host": "notprivate.example.invalid"
+      },
+      "reason": "形似反例：不是清单项的精确主机、也不是其子域 → 必须按公开处理（子串匹配的实现会误排除 → 红）"
+    },
+    {
+      "counterexample": true,
+      "expected": {
+        "classification": "public",
+        "must_appear_in_output": true
+      },
+      "id": "privacy-lookalike-mysensitive-example-test",
+      "input": {
+        "host": "mysensitive.example.test"
+      },
+      "reason": "形似反例：不是清单项的精确主机、也不是其子域 → 必须按公开处理（子串匹配的实现会误排除 → 红）"
+    }
+  ],
+  "schema_version": 1,
+  "zero_appearance_hosts": [
+    "127.0.0.1",
+    "localhost",
+    "mail.private.example.invalid"
+  ]
+}

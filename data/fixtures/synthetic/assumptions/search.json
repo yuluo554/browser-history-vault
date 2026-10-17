@@ -1,0 +1,164 @@
+{
+  "coverage": {
+    "counterexamples": 2,
+    "note": "抽样覆盖非穷举：本类只冻结下列具名样本，未覆盖的端点由规则驱动层用例另行覆盖",
+    "sampled": 8,
+    "total_in_db": 367
+  },
+  "kind": "search",
+  "params": {
+    "coverage_boundary": "只冻结『字 n-gram 包含』与『子串包含』两种读法结论一致的查询；长度短于 n 的查询端点不在此冻结",
+    "ngram_n": 2
+  },
+  "rule": "检索面 = 标题 ∪ URL；把查询串与目标都切成**字 n-gram**做包含匹配（不引分词库、不联网词典）；命中集合按全库穷举给出",
+  "samples": [
+    {
+      "counterexample": false,
+      "expected": {
+        "hit_count": 3,
+        "hits": [
+          "https://topic-a.example.test/a-001",
+          "https://topic-a.example.test/a-002",
+          "https://topic-a.example.test/a-003"
+        ]
+      },
+      "id": "search-term-family-a",
+      "input": {
+        "ngram_n": 2,
+        "query": "示例文章"
+      },
+      "reason": "中文词族 A 的完整词 → 命中该词族的全部 URL"
+    },
+    {
+      "counterexample": false,
+      "expected": {
+        "hit_count": 3,
+        "hits": [
+          "https://topic-b.example.test/b-001",
+          "https://topic-b.example.test/b-002",
+          "https://topic-b.example.test/b-003"
+        ]
+      },
+      "id": "search-term-family-b",
+      "input": {
+        "ngram_n": 2,
+        "query": "样本记录"
+      },
+      "reason": "中文词族 B → 命中 B 的全部 URL（与 A 在字 n-gram 上不可混）"
+    },
+    {
+      "counterexample": false,
+      "expected": {
+        "hit_count": 4,
+        "hits": [
+          "https://topic-c1.example.test/c-001",
+          "https://topic-c1.example.test/c-003",
+          "https://topic-c2.example.test/c-002",
+          "https://topic-c2.example.test/c-004"
+        ]
+      },
+      "id": "search-cross-domain-family-c",
+      "input": {
+        "ngram_n": 2,
+        "query": "资料汇编"
+      },
+      "reason": "跨两个域名的同一词族 → 全部命中（检索不按域名分组）"
+    },
+    {
+      "counterexample": false,
+      "expected": {
+        "hit_count": 3,
+        "hits": [
+          "https://topic-a.example.test/a-001",
+          "https://topic-a.example.test/a-002",
+          "https://topic-a.example.test/a-003"
+        ]
+      },
+      "id": "search-partial-gram-hit",
+      "input": {
+        "ngram_n": 2,
+        "query": "例文"
+      },
+      "reason": "命中只要求『查询的 n-gram 都在目标里』：例文是 A 词族的子串 → 仍命中"
+    },
+    {
+      "counterexample": true,
+      "expected": {
+        "hit_count": 0,
+        "hits": []
+      },
+      "id": "search-missing-gram-no-hit",
+      "input": {
+        "ngram_n": 2,
+        "query": "文章示例"
+      },
+      "reason": "查询的 n-gram 含『章示』，任何标题/URL 里都没有 → 0 命中（按『任一 n-gram 命中即算』的实现会误报）"
+    },
+    {
+      "counterexample": true,
+      "expected": {
+        "hit_count": 0,
+        "hits": []
+      },
+      "id": "search-missing-gram-no-hit-2",
+      "input": {
+        "ngram_n": 2,
+        "query": "文档示例"
+      },
+      "reason": "查询的 n-gram 含『档示』，不存在 → 0 命中（第二个反例，防单点巧合）"
+    },
+    {
+      "counterexample": false,
+      "expected": {
+        "hit_count": 23,
+        "hits": [
+          "https://archive.example.net/item-001",
+          "https://blog.example.org/entry-003",
+          "https://books.example.org/note-001",
+          "https://docs.example.invalid/thread-001",
+          "https://finance.example.test/note-003",
+          "https://forum.example.org/item-003",
+          "https://gallery.example.invalid/post-001",
+          "https://game.example.org/entry-002",
+          "https://grid.example.org/entry-001",
+          "https://health.example.com/item-003",
+          "https://lab.example.net/post-002",
+          "https://learn.example.org/entry-001",
+          "https://music.example.org/doc-001",
+          "https://news.example.test/item-003",
+          "https://papers.example.net/item-002",
+          "https://photo.example.invalid/note-001",
+          "https://queue.example.invalid/thread-001",
+          "https://radio.example.invalid/doc-002",
+          "https://recipe.example.com/post-003",
+          "https://shop.example.test/thread-001",
+          "https://travel.example.org/note-003",
+          "https://weather.example.org/thread-003",
+          "https://wiki.example.invalid/thread-003"
+        ]
+      },
+      "id": "search-ascii-lowercase-hit",
+      "input": {
+        "ngram_n": 2,
+        "query": "sample page"
+      },
+      "reason": "ASCII 查询同样走字 n-gram：命中背景里那一族标题，不得命中 sample record 族"
+    },
+    {
+      "counterexample": false,
+      "expected": {
+        "hit_count": 1,
+        "hits": [
+          "https://search-url.example.test/unique-path-marker"
+        ]
+      },
+      "id": "search-url-only-hit",
+      "input": {
+        "ngram_n": 2,
+        "query": "unique-path-marker"
+      },
+      "reason": "查询只出现在 URL 上（标题里没有）也要命中：检索面 = 标题 ∪ URL"
+    }
+  ],
+  "schema_version": 1
+}

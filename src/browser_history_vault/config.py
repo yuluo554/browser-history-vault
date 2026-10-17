@@ -21,6 +21,8 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from .timeutil import WEEKDAY_STARTS as _WEEKDAY_STARTS
+
 #: 配置文件名与样例文件名。
 CONFIG_FILENAME = "config.json"
 CONFIG_EXAMPLE_FILENAME = "config.example.json"
@@ -28,7 +30,6 @@ CONFIG_EXAMPLE_FILENAME = "config.example.json"
 #: 配置契约版本（新增/改名/删必需键时为破坏性变更，须升档并在 plan/03 记一条决策）。
 CONFIG_SCHEMA_VERSION = 1
 
-_WEEKDAY_STARTS = ("monday", "sunday")
 _EMPTY_SENTINEL = object()
 
 

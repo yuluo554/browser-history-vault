@@ -47,6 +47,12 @@ archive-local/
 data/**/_local/
 data/**/_private/
 
+# 例外：程序化合成、假域名、可一键复跑的 fixtures **必须**入仓
+# （`data/README.md` §3：真实历史永不入仓，但合成库是"可复跑的测量"的地基）。
+# 注意：negation 必须写在上面这些封死规则**之后**（gitignore 取最后一条匹配）。
+!data/fixtures/synthetic/**/History
+!data/fixtures/synthetic/**/History-wal
+
 # 生成报告与导出（含合成样本除外，合成报告放 data/fixtures 下显式提交）
 *.html
 !data/fixtures/**/*.html

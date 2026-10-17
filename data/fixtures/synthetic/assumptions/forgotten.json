@@ -1,0 +1,545 @@
+{
+  "coverage": {
+    "counterexamples": 10,
+    "note": "抽样覆盖非穷举：本类只冻结下列具名样本，未覆盖的端点由规则驱动层用例另行覆盖",
+    "sampled": 16,
+    "total_in_db": 367
+  },
+  "expected_hits_all_urls": [
+    "https://forgotten-boundary-plus.example.test/article",
+    "https://forgotten-days-exact.example.test/article",
+    "https://forgotten-hit.example.test/article",
+    "https://forgotten-localday.example.test/article",
+    "https://forgotten-visits-exact.example.test/article",
+    "https://localhost.example.test/article",
+    "https://notprivate.example.invalid/article"
+  ],
+  "kind": "forgotten",
+  "params": {
+    "days_threshold": 90,
+    "min_distinct_days": 2,
+    "min_visits": 3,
+    "private_domains": [
+      "localhost",
+      "127.0.0.1",
+      "mail.google.com",
+      "outlook.live.com",
+      "mail.qq.com",
+      "private.example.invalid"
+    ],
+    "sensitive_domains": [
+      "sensitive.example.test"
+    ],
+    "timezone_utc_offset_minutes": 480,
+    "today_local_date": "2026-10-17"
+  },
+  "partition": {
+    "excluded_private_or_sensitive": 9,
+    "identity": "三者互不相交且并为全部 URL（集合划分，不是加法口径）",
+    "labels": [
+      "matched",
+      "excluded_private_or_sensitive",
+      "no_match"
+    ],
+    "matched": 7,
+    "no_match": 135,
+    "total_urls": 151
+  },
+  "rule": "命中 = ①最后访问距今天数严格大于阈值 ②总访问次数 ≥ 下限 ③跨越的**本地**日历日数 ≥ 下限 ④主机不在私密/敏感清单",
+  "samples": [
+    {
+      "counterexample": false,
+      "expected": {
+        "failed_conditions": [],
+        "forgotten": true
+      },
+      "id": "forgotten-hit-basic",
+      "input": {
+        "host": "forgotten-hit.example.test",
+        "url": "https://forgotten-hit.example.test/article",
+        "visits_days_before_anchor": [
+          [
+            400,
+            10,
+            0
+          ],
+          [
+            380,
+            11,
+            0
+          ],
+          [
+            300,
+            12,
+            0
+          ]
+        ]
+      },
+      "reason": "最后访问距今 300 天 > 阈值、3 次访问 ≥ 下限、跨 3 个本地日 ≥ 下限 → 命中"
+    },
+    {
+      "counterexample": false,
+      "expected": {
+        "failed_conditions": [],
+        "forgotten": true
+      },
+      "id": "forgotten-hit-threshold-plus-one",
+      "input": {
+        "host": "forgotten-boundary-plus.example.test",
+        "url": "https://forgotten-boundary-plus.example.test/article",
+        "visits_days_before_anchor": [
+          [
+            200,
+            11,
+            0
+          ],
+          [
+            150,
+            10,
+            0
+          ],
+          [
+            91,
+            9,
+            0
+          ]
+        ]
+      },
+      "reason": "最后访问距今恰好 阈值+1 天 → 严格大于成立 → 命中（边界外侧正例）"
+    },
+    {
+      "counterexample": true,
+      "expected": {
+        "failed_conditions": [
+          "last_visit_days_ago_strictly_greater_than_threshold"
+        ],
+        "forgotten": false
+      },
+      "id": "forgotten-miss-exactly-threshold",
+      "input": {
+        "host": "forgotten-boundary-exact.example.test",
+        "url": "https://forgotten-boundary-exact.example.test/article",
+        "visits_days_before_anchor": [
+          [
+            200,
+            11,
+            0
+          ],
+          [
+            150,
+            10,
+            0
+          ],
+          [
+            90,
+            9,
+            0
+          ]
+        ]
+      },
+      "reason": "最后访问距今**恰好等于**阈值 → 严格大于不成立 → 不命中（写成 ≥ 的实现会在这里红）"
+    },
+    {
+      "counterexample": true,
+      "expected": {
+        "failed_conditions": [
+          "last_visit_days_ago_strictly_greater_than_threshold"
+        ],
+        "forgotten": false
+      },
+      "id": "forgotten-miss-one-day-short",
+      "input": {
+        "host": "forgotten-boundary-minus.example.test",
+        "url": "https://forgotten-boundary-minus.example.test/article",
+        "visits_days_before_anchor": [
+          [
+            200,
+            11,
+            0
+          ],
+          [
+            150,
+            10,
+            0
+          ],
+          [
+            89,
+            9,
+            0
+          ]
+        ]
+      },
+      "reason": "最后访问距今比阈值少 1 天 → 不命中（「只差一天」反例）"
+    },
+    {
+      "counterexample": true,
+      "expected": {
+        "failed_conditions": [
+          "visits_at_least_min_visits"
+        ],
+        "forgotten": false
+      },
+      "id": "forgotten-miss-too-few-visits",
+      "input": {
+        "host": "forgotten-visits-short.example.test",
+        "url": "https://forgotten-visits-short.example.test/article",
+        "visits_days_before_anchor": [
+          [
+            200,
+            9,
+            0
+          ],
+          [
+            150,
+            10,
+            0
+          ]
+        ]
+      },
+      "reason": "只有 2 次访问（< 下限）→ 不命中（「次数不足」反例：天数与跨越天数都满足，专测次数这一条）"
+    },
+    {
+      "counterexample": false,
+      "expected": {
+        "failed_conditions": [],
+        "forgotten": true
+      },
+      "id": "forgotten-hit-exactly-min-visits",
+      "input": {
+        "host": "forgotten-visits-exact.example.test",
+        "url": "https://forgotten-visits-exact.example.test/article",
+        "visits_days_before_anchor": [
+          [
+            200,
+            9,
+            0
+          ],
+          [
+            190,
+            10,
+            0
+          ],
+          [
+            180,
+            11,
+            0
+          ]
+        ]
+      },
+      "reason": "访问次数恰好等于下限（3 ≥ 3）→ 命中（边界内侧正例）"
+    },
+    {
+      "counterexample": true,
+      "expected": {
+        "failed_conditions": [
+          "distinct_local_days_at_least_min"
+        ],
+        "forgotten": false
+      },
+      "id": "forgotten-miss-single-day-burst",
+      "input": {
+        "host": "forgotten-burst.example.test",
+        "url": "https://forgotten-burst.example.test/article",
+        "visits_days_before_anchor": [
+          [
+            300,
+            9,
+            0
+          ],
+          [
+            300,
+            10,
+            0
+          ],
+          [
+            300,
+            11,
+            0
+          ]
+        ]
+      },
+      "reason": "同一天集中访问 3 次（跨越 1 个本地日 < 下限）→ 不命中（「某天狂刷」反例，专测跨越天数这一条）"
+    },
+    {
+      "counterexample": false,
+      "expected": {
+        "failed_conditions": [],
+        "forgotten": true
+      },
+      "id": "forgotten-hit-exactly-min-distinct-days",
+      "input": {
+        "host": "forgotten-days-exact.example.test",
+        "url": "https://forgotten-days-exact.example.test/article",
+        "visits_days_before_anchor": [
+          [
+            200,
+            9,
+            0
+          ],
+          [
+            199,
+            10,
+            0
+          ],
+          [
+            199,
+            11,
+            0
+          ]
+        ]
+      },
+      "reason": "跨越恰好 2 个本地日（= 下限）→ 命中（边界内侧正例）"
+    },
+    {
+      "counterexample": true,
+      "expected": {
+        "failed_conditions": [
+          "host_not_private_or_sensitive"
+        ],
+        "forgotten": false
+      },
+      "id": "forgotten-miss-private-localhost",
+      "input": {
+        "host": "localhost",
+        "url": "http://localhost/article",
+        "visits_days_before_anchor": [
+          [
+            400,
+            10,
+            0
+          ],
+          [
+            380,
+            11,
+            0
+          ],
+          [
+            300,
+            12,
+            0
+          ]
+        ]
+      },
+      "reason": "三条高价值条件全满足，但主机在私密清单里（精确主机命中）→ 不命中且**完全不进统计**（「私密命中」反例）"
+    },
+    {
+      "counterexample": true,
+      "expected": {
+        "failed_conditions": [
+          "host_not_private_or_sensitive"
+        ],
+        "forgotten": false
+      },
+      "id": "forgotten-miss-private-subdomain",
+      "input": {
+        "host": "mail.private.example.invalid",
+        "url": "https://mail.private.example.invalid/article",
+        "visits_days_before_anchor": [
+          [
+            400,
+            10,
+            0
+          ],
+          [
+            380,
+            11,
+            0
+          ],
+          [
+            300,
+            12,
+            0
+          ]
+        ]
+      },
+      "reason": "私密清单项的**子域**一并排除 → 不命中（测「以 . + 项 结尾」这条匹配语义）"
+    },
+    {
+      "counterexample": true,
+      "expected": {
+        "failed_conditions": [
+          "host_not_private_or_sensitive"
+        ],
+        "forgotten": false
+      },
+      "id": "forgotten-miss-sensitive",
+      "input": {
+        "host": "sensitive.example.test",
+        "url": "https://sensitive.example.test/article",
+        "visits_days_before_anchor": [
+          [
+            400,
+            10,
+            0
+          ],
+          [
+            380,
+            11,
+            0
+          ],
+          [
+            300,
+            12,
+            0
+          ]
+        ]
+      },
+      "reason": "敏感主机同样不进洞察判定（第 ④ 条含敏感清单）→ 不命中"
+    },
+    {
+      "counterexample": true,
+      "expected": {
+        "failed_conditions": [
+          "host_not_private_or_sensitive"
+        ],
+        "forgotten": false
+      },
+      "id": "forgotten-miss-private-ip-literal",
+      "input": {
+        "host": "127.0.0.1",
+        "url": "http://127.0.0.1:8080/local",
+        "visits_days_before_anchor": [
+          [
+            400,
+            10,
+            0
+          ],
+          [
+            380,
+            11,
+            0
+          ],
+          [
+            300,
+            12,
+            0
+          ]
+        ]
+      },
+      "reason": "URL 里带端口的回环地址：解析主机时必须去端口再匹配 → 命中私密 → 不命中"
+    },
+    {
+      "counterexample": true,
+      "expected": {
+        "failed_conditions": [],
+        "forgotten": true
+      },
+      "id": "forgotten-hit-lookalike-not-private",
+      "input": {
+        "host": "localhost.example.test",
+        "url": "https://localhost.example.test/article",
+        "visits_days_before_anchor": [
+          [
+            400,
+            10,
+            0
+          ],
+          [
+            380,
+            11,
+            0
+          ],
+          [
+            300,
+            12,
+            0
+          ]
+        ]
+      },
+      "reason": "看起来像私密（以 localhost 开头）但**不是**：不是精确主机、也不是清单项子域 → 命中；子串匹配的实现会误排除 → 漏检 → 红"
+    },
+    {
+      "counterexample": false,
+      "expected": {
+        "failed_conditions": [],
+        "forgotten": true
+      },
+      "id": "forgotten-hit-notprivate-lookalike",
+      "input": {
+        "host": "notprivate.example.invalid",
+        "url": "https://notprivate.example.invalid/article",
+        "visits_days_before_anchor": [
+          [
+            400,
+            10,
+            0
+          ],
+          [
+            380,
+            11,
+            0
+          ],
+          [
+            300,
+            12,
+            0
+          ]
+        ]
+      },
+      "reason": "域名中含 private 但不是清单项的精确主机、也不是其子域 → 视为公开 → 命中"
+    },
+    {
+      "counterexample": false,
+      "expected": {
+        "failed_conditions": [],
+        "forgotten": true
+      },
+      "id": "forgotten-hit-distinct-days-use-local-calendar",
+      "input": {
+        "host": "forgotten-localday.example.test",
+        "url": "https://forgotten-localday.example.test/article",
+        "visits_days_before_anchor": [
+          [
+            400,
+            9,
+            0
+          ],
+          [
+            400,
+            10,
+            0
+          ],
+          [
+            399,
+            7,
+            0
+          ]
+        ]
+      },
+      "reason": "本地 D-400 09:00、10:00 与 D-399 07:00：本地日跨 2 天（= 下限）但同属一个 UTC 日 → 用 UTC 日聚桶的实现会漏检 → 红"
+    },
+    {
+      "counterexample": true,
+      "expected": {
+        "failed_conditions": [
+          "last_visit_days_ago_strictly_greater_than_threshold"
+        ],
+        "forgotten": false
+      },
+      "id": "forgotten-miss-recent-return",
+      "input": {
+        "host": "forgotten-return.example.test",
+        "url": "https://forgotten-return.example.test/article",
+        "visits_days_before_anchor": [
+          [
+            400,
+            10,
+            0
+          ],
+          [
+            300,
+            11,
+            0
+          ],
+          [
+            0,
+            12,
+            0
+          ]
+        ]
+      },
+      "reason": "曾长期不用，但**今天又访问了**：判据取最后一次访问（不是第一次、不是最小）→ 不命中（取了 min 的实现会在这里红）"
+    }
+  ],
+  "schema_version": 1
+}

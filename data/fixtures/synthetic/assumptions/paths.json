@@ -1,0 +1,152 @@
+{
+  "coverage": {
+    "counterexamples": 1,
+    "note": "抽样覆盖非穷举：本类只冻结下列具名样本，未覆盖的端点由规则驱动层用例另行覆盖",
+    "sampled": 5,
+    "total_in_db": 367
+  },
+  "expected_path_total": 288,
+  "kind": "paths",
+  "params": {
+    "gap_minutes": 30
+  },
+  "rule": "研究路径 = 同会话内连续跳转序列（会话口径与模块③同源）；步骤按 (visit_time_us, url) 升序，同刻次序由显式次排序键决定",
+  "samples": [
+    {
+      "counterexample": false,
+      "expected": {
+        "path_count": 1,
+        "step_urls": [
+          [
+            "https://planted-path.example.test/linear/open",
+            "https://planted-path.example.test/linear/detail",
+            "https://planted-path.example.test/linear/cite"
+          ]
+        ]
+      },
+      "id": "path-linear-three-steps",
+      "input": {
+        "gap_minutes": 30,
+        "offsets_seconds": [
+          0,
+          120,
+          240
+        ],
+        "urls": [
+          "https://planted-path.example.test/linear/open",
+          "https://planted-path.example.test/linear/detail",
+          "https://planted-path.example.test/linear/cite"
+        ]
+      },
+      "reason": "同会话 3 步跳转 → 一条路径，步骤按访问时间升序"
+    },
+    {
+      "counterexample": false,
+      "expected": {
+        "path_count": 1,
+        "step_urls": [
+          [
+            "https://planted-path.example.test/tie/alpha",
+            "https://planted-path.example.test/tie/bravo"
+          ]
+        ]
+      },
+      "id": "path-same-instant-order",
+      "input": {
+        "gap_minutes": 30,
+        "offsets_seconds": [
+          0,
+          0
+        ],
+        "urls": [
+          "https://planted-path.example.test/tie/bravo",
+          "https://planted-path.example.test/tie/alpha"
+        ]
+      },
+      "reason": "同一微秒的两步 → 次序由显式次排序键决定（url 升序）；生成器按规范序插入，故库内 visit_id 升序与之同序"
+    },
+    {
+      "counterexample": true,
+      "expected": {
+        "path_count": 2,
+        "step_urls": [
+          [
+            "https://planted-path.example.test/cross/first"
+          ],
+          [
+            "https://planted-path.example.test/cross/second",
+            "https://planted-path.example.test/cross/third"
+          ]
+        ]
+      },
+      "id": "path-cross-session-not-joined",
+      "input": {
+        "gap_minutes": 30,
+        "offsets_seconds": [
+          0,
+          1801,
+          1810
+        ],
+        "urls": [
+          "https://planted-path.example.test/cross/first",
+          "https://planted-path.example.test/cross/second",
+          "https://planted-path.example.test/cross/third"
+        ]
+      },
+      "reason": "第 1→2 步超出会话间隔 → 不得跨会话串成一条路径（反例）"
+    },
+    {
+      "counterexample": false,
+      "expected": {
+        "path_count": 1,
+        "step_urls": [
+          [
+            "https://planted-path.example.test/repeat/home",
+            "https://planted-path.example.test/repeat/other",
+            "https://planted-path.example.test/repeat/home"
+          ]
+        ]
+      },
+      "id": "path-repeat-same-url",
+      "input": {
+        "gap_minutes": 30,
+        "offsets_seconds": [
+          0,
+          60,
+          120
+        ],
+        "urls": [
+          "https://planted-path.example.test/repeat/home",
+          "https://planted-path.example.test/repeat/other"
+        ]
+      },
+      "reason": "同会话内来回访问同一 URL → 步骤按访问序列保留重复（不做去重）"
+    },
+    {
+      "counterexample": false,
+      "expected": {
+        "path_count": 1,
+        "step_urls": [
+          [
+            "https://planted-path.example.test/edge/start",
+            "https://planted-path.example.test/edge/next"
+          ]
+        ]
+      },
+      "id": "path-exact-boundary-inside",
+      "input": {
+        "gap_minutes": 30,
+        "offsets_seconds": [
+          0,
+          1800
+        ],
+        "urls": [
+          "https://planted-path.example.test/edge/start",
+          "https://planted-path.example.test/edge/next"
+        ]
+      },
+      "reason": "恰好等于会话间隔 → 仍属同一会话 → 同一条路径（与会话口径同源）"
+    }
+  ],
+  "schema_version": 1
+}

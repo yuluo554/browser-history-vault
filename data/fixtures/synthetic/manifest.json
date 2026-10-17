@@ -1,0 +1,476 @@
+{
+  "anchor_local_date": "2026-10-17",
+  "artifacts": [
+    {
+      "bytes": 93724,
+      "frozen": true,
+      "lines": 367,
+      "path": "canonical/visits.jsonl",
+      "role": "逐字节冻结的对象（--check 重生成后逐字节比对）",
+      "sha256": "ffbe0ea92ed0c2317bcfe28485364d88075f80f865e03bb6940e2a8082666625"
+    },
+    {
+      "bytes": 4804,
+      "frozen": true,
+      "lines": 197,
+      "path": "canonical/counts.json",
+      "role": "逐字节冻结的对象（--check 重生成后逐字节比对）",
+      "sha256": "d680a0278b8a0cf49e5706f6749861bdc968fc1fee56b1531353b487913183ef"
+    },
+    {
+      "bytes": 1678,
+      "frozen": true,
+      "lines": 54,
+      "path": "assumptions/archive_idempotence.json",
+      "role": "逐字节冻结的对象（--check 重生成后逐字节比对）",
+      "sha256": "c2f79c5089f77ac14bf87b9b94749dda338d068469b7b86800b810b3f602b556"
+    },
+    {
+      "bytes": 6526,
+      "frozen": true,
+      "lines": 251,
+      "path": "assumptions/sessions.json",
+      "role": "逐字节冻结的对象（--check 重生成后逐字节比对）",
+      "sha256": "cb8b7005c6d9453ef34321a26aaa16815ec92bf6184f288ba16ca1326ac612a9"
+    },
+    {
+      "bytes": 13472,
+      "frozen": true,
+      "lines": 545,
+      "path": "assumptions/forgotten.json",
+      "role": "逐字节冻结的对象（--check 重生成后逐字节比对）",
+      "sha256": "163f638f36f283cc9bb7e9004ae7546359d7dead1e73e727f92a95f34d918ce2"
+    },
+    {
+      "bytes": 6299,
+      "frozen": true,
+      "lines": 278,
+      "path": "assumptions/heatmap.json",
+      "role": "逐字节冻结的对象（--check 重生成后逐字节比对）",
+      "sha256": "49e60b316cd822f99a76a67af83701a204c6935e9c086c5df9a97f55bca9d21b"
+    },
+    {
+      "bytes": 2503,
+      "frozen": true,
+      "lines": 86,
+      "path": "assumptions/domains.json",
+      "role": "逐字节冻结的对象（--check 重生成后逐字节比对）",
+      "sha256": "a6f83f5e100e68f26bcd5f9fb47893942144d4648b463b1db6e163ed5234444a"
+    },
+    {
+      "bytes": 6326,
+      "frozen": true,
+      "lines": 210,
+      "path": "assumptions/topics.json",
+      "role": "逐字节冻结的对象（--check 重生成后逐字节比对）",
+      "sha256": "ddfb0c3f6ab896d6a05d50d962b8e2e50dccad527a5b1efdbc968de916a42d88"
+    },
+    {
+      "bytes": 4372,
+      "frozen": true,
+      "lines": 152,
+      "path": "assumptions/paths.json",
+      "role": "逐字节冻结的对象（--check 重生成后逐字节比对）",
+      "sha256": "978f4de3b2db8c65bbaee34d803cad69891ada2449e2f5eb7ad93f21f8db798c"
+    },
+    {
+      "bytes": 5311,
+      "frozen": true,
+      "lines": 164,
+      "path": "assumptions/search.json",
+      "role": "逐字节冻结的对象（--check 重生成后逐字节比对）",
+      "sha256": "eef3abdca3cb3998d7e7b4943d29ce4781250aa7ffa5349ae07b79f4b495abfc"
+    },
+    {
+      "bytes": 4653,
+      "frozen": true,
+      "lines": 146,
+      "path": "assumptions/privacy.json",
+      "role": "逐字节冻结的对象（--check 重生成后逐字节比对）",
+      "sha256": "006431d10a8dcdcee433febb0efe900a209c86e12f532bc1ab5e76450f6214ea"
+    },
+    {
+      "frozen": false,
+      "path": "chrome/History",
+      "role": "可重建产物：SQLite/WAL 字节不承诺跨平台与跨版本一致，一致性由『读回的规范化导出』守门"
+    },
+    {
+      "frozen": false,
+      "path": "edge/History",
+      "role": "可重建产物：SQLite/WAL 字节不承诺跨平台与跨版本一致，一致性由『读回的规范化导出』守门"
+    },
+    {
+      "frozen": false,
+      "path": "chrome-running/History",
+      "role": "可重建产物：SQLite/WAL 字节不承诺跨平台与跨版本一致，一致性由『读回的规范化导出』守门"
+    },
+    {
+      "frozen": false,
+      "path": "chrome-running/History-wal",
+      "role": "可重建产物：SQLite/WAL 字节不承诺跨平台与跨版本一致，一致性由『读回的规范化导出』守门"
+    }
+  ],
+  "assumptions": [
+    {
+      "counterexamples": 2,
+      "kind": "archive_idempotence",
+      "path": "assumptions/archive_idempotence.json",
+      "samples": 3
+    },
+    {
+      "counterexamples": 1,
+      "kind": "sessions",
+      "path": "assumptions/sessions.json",
+      "samples": 8
+    },
+    {
+      "counterexamples": 10,
+      "kind": "forgotten",
+      "path": "assumptions/forgotten.json",
+      "samples": 16
+    },
+    {
+      "counterexamples": 3,
+      "kind": "heatmap",
+      "path": "assumptions/heatmap.json",
+      "samples": 8
+    },
+    {
+      "counterexamples": 2,
+      "kind": "domains",
+      "path": "assumptions/domains.json",
+      "samples": 4
+    },
+    {
+      "counterexamples": 2,
+      "kind": "topics",
+      "path": "assumptions/topics.json",
+      "samples": 8
+    },
+    {
+      "counterexamples": 1,
+      "kind": "paths",
+      "path": "assumptions/paths.json",
+      "samples": 5
+    },
+    {
+      "counterexamples": 2,
+      "kind": "search",
+      "path": "assumptions/search.json",
+      "samples": 8
+    },
+    {
+      "counterexamples": 3,
+      "kind": "privacy",
+      "path": "assumptions/privacy.json",
+      "samples": 8
+    }
+  ],
+  "bench": {
+    "counterexamples_required_per_kind": 1,
+    "exit_codes": {
+      "0": "全部已启用套件达标",
+      "1": "有未达标，或存在未启用套件（未启用与『跑了没过』同码不同义，文本可区分）",
+      "2": "用法与未知名错误"
+    },
+    "suites": {
+      "B0": {
+        "enabled": true,
+        "max_false_positive": 0.0,
+        "min_detection_rate": 1.0,
+        "min_samples_per_kind": {
+          "archive_idempotence": 3,
+          "domains": 4,
+          "forgotten": 12,
+          "heatmap": 6,
+          "paths": 5,
+          "privacy": 6,
+          "search": 5,
+          "sessions": 6,
+          "topics": 6
+        },
+        "notes": "逐样本点名核对：期望值必须由 reference.py 从规范化导出复算得出（与生成侧实现互为交叉验证）",
+        "title": "数据底座与真值一致性（真值可由独立参照实现复算）"
+      },
+      "B1": {
+        "enabled": false,
+        "not_enabled_reason": "归档模块尚未交付；数据侧真值已在 assumptions/archive_idempotence.json 就位",
+        "title": "归档幂等"
+      },
+      "B2": {
+        "enabled": false,
+        "not_enabled_reason": "检索模块尚未交付",
+        "title": "查询确定性"
+      },
+      "B3": {
+        "enabled": false,
+        "not_enabled_reason": "洞察模块尚未交付；数据侧真值已就位",
+        "title": "洞察口径（会话/遗忘/热力/集中度）"
+      },
+      "B4": {
+        "enabled": false,
+        "not_enabled_reason": "聚类模块尚未交付；路径真值已就位",
+        "title": "聚类与路径"
+      },
+      "B5": {
+        "enabled": false,
+        "not_enabled_reason": "报告模块尚未交付；隐私真值已就位",
+        "title": "隐私与零外链"
+      }
+    }
+  },
+  "coverage": {
+    "days_with_visits": 111,
+    "declaration": "覆盖区间按**口径时区下的本地日**统计（含首尾）；区间内连续无数据的本地日合并为缺口区间如实列出",
+    "first_local_date": "2025-05-30",
+    "gap_days_total": 395,
+    "gaps": [
+      {
+        "days": 18,
+        "from": "2025-05-31",
+        "to": "2025-06-17"
+      },
+      {
+        "days": 16,
+        "from": "2025-06-19",
+        "to": "2025-07-04"
+      },
+      {
+        "days": 11,
+        "from": "2025-07-06",
+        "to": "2025-07-16"
+      },
+      {
+        "days": 32,
+        "from": "2025-07-18",
+        "to": "2025-08-18"
+      },
+      {
+        "days": 15,
+        "from": "2025-08-20",
+        "to": "2025-09-03"
+      },
+      {
+        "days": 6,
+        "from": "2025-09-06",
+        "to": "2025-09-11"
+      },
+      {
+        "days": 18,
+        "from": "2025-09-14",
+        "to": "2025-10-01"
+      },
+      {
+        "days": 4,
+        "from": "2025-10-03",
+        "to": "2025-10-06"
+      },
+      {
+        "days": 6,
+        "from": "2025-10-08",
+        "to": "2025-10-13"
+      },
+      {
+        "days": 2,
+        "from": "2025-10-15",
+        "to": "2025-10-16"
+      },
+      {
+        "days": 26,
+        "from": "2025-10-18",
+        "to": "2025-11-12"
+      },
+      {
+        "days": 12,
+        "from": "2025-11-14",
+        "to": "2025-11-25"
+      },
+      {
+        "days": 2,
+        "from": "2025-11-27",
+        "to": "2025-11-28"
+      },
+      {
+        "days": 11,
+        "from": "2025-11-30",
+        "to": "2025-12-10"
+      },
+      {
+        "days": 9,
+        "from": "2025-12-12",
+        "to": "2025-12-20"
+      },
+      {
+        "days": 8,
+        "from": "2025-12-22",
+        "to": "2025-12-29"
+      },
+      {
+        "days": 27,
+        "from": "2025-12-31",
+        "to": "2026-01-26"
+      },
+      {
+        "days": 11,
+        "from": "2026-01-28",
+        "to": "2026-02-07"
+      },
+      {
+        "days": 2,
+        "from": "2026-02-09",
+        "to": "2026-02-10"
+      },
+      {
+        "days": 32,
+        "from": "2026-02-12",
+        "to": "2026-03-15"
+      },
+      {
+        "days": 14,
+        "from": "2026-03-17",
+        "to": "2026-03-30"
+      },
+      {
+        "days": 8,
+        "from": "2026-04-02",
+        "to": "2026-04-09"
+      },
+      {
+        "days": 7,
+        "from": "2026-04-12",
+        "to": "2026-04-18"
+      },
+      {
+        "days": 9,
+        "from": "2026-04-21",
+        "to": "2026-04-29"
+      },
+      {
+        "days": 19,
+        "from": "2026-05-01",
+        "to": "2026-05-19"
+      },
+      {
+        "days": 58,
+        "from": "2026-05-21",
+        "to": "2026-07-17"
+      },
+      {
+        "days": 3,
+        "from": "2026-07-21",
+        "to": "2026-07-23"
+      },
+      {
+        "days": 1,
+        "from": "2026-08-11",
+        "to": "2026-08-11"
+      },
+      {
+        "days": 1,
+        "from": "2026-08-20",
+        "to": "2026-08-20"
+      },
+      {
+        "days": 7,
+        "from": "2026-09-27",
+        "to": "2026-10-03"
+      }
+    ],
+    "interval_days": 506,
+    "last_local_date": "2026-10-17"
+  },
+  "database": {
+    "databases": [
+      {
+        "path": "chrome/History",
+        "source_browser": "chrome",
+        "visits": 325,
+        "withheld_tail": 0
+      },
+      {
+        "path": "edge/History",
+        "source_browser": "edge",
+        "visits": 42,
+        "withheld_tail": 0
+      },
+      {
+        "note": "主库缺最新 7 条 visit；最新记录只在未折叠的 -wal 里，折叠 WAL 后行集才与规范化导出一致",
+        "path": "chrome-running/History",
+        "source_browser": "chrome",
+        "visits": 318,
+        "wal": "chrome-running/History-wal",
+        "withheld_tail": 7
+      }
+    ],
+    "tables": {
+      "meta": 3,
+      "urls": 151,
+      "visit_source": 367,
+      "visits": 367
+    }
+  },
+  "generator": {
+    "note": "生成器自身的 sha256 进台账：改了生成器就必须重生成并提交，防『改了生成器没重生成数据』的静默漂移",
+    "path": "tools/gen_synthetic_history.py",
+    "sha256": "3a3665ab9d9cc3bdf155c6fa224a15106aebe3419d0eb8670ea1c084fad6844f"
+  },
+  "invariants": {
+    "background_days_before": "背景总体分两层：近期密集段落在锚点前 21..85 日，更早的零星残留落在 160..520 日；两层之间的真空与其余空日合起来构成 coverage.gaps。锚点前 1..13 日留给会话/路径样本（保证样本时间邻域隔离）",
+    "hosts": "全部主机 ∈ RFC 2606/6761 保留域白名单（localhost / 127.0.0.1 仅作私密样本）",
+    "no_clock_fields": "产物不含任何时钟/运行时间字段（生成时刻不落盘）",
+    "no_real_sites": "无任何真实站点域名、真实人名、真实邮箱；标题为中性占位文本",
+    "sources": "两个来源各一份库文件（chrome/ 与 edge/）：Chromium 的 History 不含来源列，来源由文件位置决定",
+    "visit_dedup_key": "(visit_time_us, url, source_browser, source_profile) 在库内唯一（K10 去重键口径）",
+    "visit_id_order": "visits.id 按规范化序升序分配（同刻访问按 url 升序）→ 同刻次序在库内与规范序一致"
+  },
+  "kind": "browser-history-vault/synthetic-fixture",
+  "schema_version": 1,
+  "seed": 20261017,
+  "source_config": {
+    "note": "基准与真值一律按这份口径生成；口径变了 --check 会红（改口径 = 改数据 + 重生成）",
+    "params": {
+      "cluster": {
+        "min_df": 2
+      },
+      "config_version": 1,
+      "forgotten": {
+        "days_threshold": 90,
+        "min_distinct_days": 2,
+        "min_visits": 3
+      },
+      "private_domains": [
+        "localhost",
+        "127.0.0.1",
+        "mail.google.com",
+        "outlook.live.com",
+        "mail.qq.com",
+        "private.example.invalid"
+      ],
+      "random_seed": 20261017,
+      "report": {
+        "weekday_start": "monday"
+      },
+      "search": {
+        "ngram_n": 2
+      },
+      "sensitive_domains": [
+        "sensitive.example.test"
+      ],
+      "session_gap_minutes": 30,
+      "timezone_utc_offset_minutes": 480
+    },
+    "path": "config.example.json",
+    "sha256": "ce467c04a17d549ea7f9c8ee0a7451a1873dccb6bac54b7ce0c1a83848ccb4d5"
+  },
+  "timezone_utc_offset_minutes": 480,
+  "totals": {
+    "distinct_hosts": 61,
+    "distinct_local_days": 111,
+    "sources": [
+      "chrome",
+      "edge"
+    ],
+    "urls": 151,
+    "visits": 367
+  }
+}

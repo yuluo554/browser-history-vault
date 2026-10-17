@@ -34,6 +34,7 @@
 | **K26** | 私密域名在输出中**零出现**；敏感域名**打码**（二者语义不同：排除 vs 保留统计但掩码） | 隐私门禁单点（M5） |
 | **K27** | 判定语义不虚高：`not_applicable` 只给"原文明确写了例外情形"的项；无适用项 → `not_assessed`（不输出 compliant）；**缺材料 ≠ 不适用** | 洞察/报告层（M3/M5） |
 | **K28** | 数据不编造：缺字段不落库不补编、点名降级；未验证平台/格式不用确定语气（三态 ✅/⬜ 同步 `data/README.md`） | 台账 + README |
+| **K29** | **合成数据底座的真值纪律与台账门禁**：①真值库只存"输入 + 期望"（出现 `observed` 即红）；②期望必须由**与引擎零共享**的参照实现复算（`reference.py`：放包内 / 生产模块禁 import，AST 守门 / 必被 `selftest` 与 `bench` 读）；③每类必含反例样本，样本数达 `manifest` 下发的门槛；④`--check` **两层断言**（冻结产物形态 + 重生成逐字节一致），改坏生成器至少一层红；⑤冻结产物按类型分层：文本逐字节冻结、SQLite/WAL 只比"读回的规范化导出"；⑥`bhvault selftest` 必须真读 `manifest.json`（sha256/行数 + 真值复算），这是"用户敲的那条命令"的证据面 | `tools/gen_synthetic_history.py`；`tools/bench.py`；`src/browser_history_vault/reference.py`；`selftest.py` 的 `data-ledger`；`tests/test_synthetic_fixture.py` / `test_generator_mutation.py` / `test_selftest_fixtures.py` / `test_bench_falsifiable.py` / `test_reference_isolation.py`；`data/README.md` §3；`plan/05` §2–§10 |
 
 ## 维护纪律
 

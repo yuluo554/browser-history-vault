@@ -18,13 +18,16 @@
     "127.0.0.1",
     "mail.google.com",
     "outlook.live.com",
-    "mail.qq.com"
+    "mail.qq.com",
+    "private.example.invalid"
   ],
-  "_private_domains": "私密域名清单：命中（含子域）的记录在归档与报告中一律排除，不得静默关闭。请按自己的实际情况增删（例如你的网银、邮箱、内部系统域名）。IPv6 字面量暂不支持，须写成主机名。",
-  "_private_domains_matching": "匹配语义：host == 项 或 host 以 '.' + 项 结尾（子域一并排除）。",
+  "_private_domains": "私密域名清单：命中（含子域）的记录在归档与报告中一律排除，不得静默关闭。请按自己的实际情况增删（例如你的网银、邮箱、内部系统域名）。其中 private.example.invalid 是 RFC 6761 保留域，作为**示例项**保留：它让「默认排除 + 子域一并排除」这条口径在仓库自带的合成数据上可复跑验证（对照样本 localhost.example.test 不得被排除）。不需要可直接删除（清单非空即可）。",
+  "_private_domains_matching": "匹配语义：host == 项 或 host 以 '.' + 项 结尾（子域一并排除）。刻意不是子串匹配：localhost.example.test 不因含 localhost 而被排除。IPv6 字面量暂不支持，须写成主机名。",
 
-  "sensitive_domains": [],
-  "_sensitive_domains": "敏感域名清单：不在报告中直接显示，改为打码呈现（与『完全排除』的 private_domains 是两回事）。",
+  "sensitive_domains": [
+    "sensitive.example.test"
+  ],
+  "_sensitive_domains": "敏感域名清单：不在报告中直接显示，改为打码呈现（与『完全排除』的 private_domains 是两回事：**保留统计**，只掩码）。其中 sensitive.example.test 同为 RFC 6761 保留域的示例项，用途同上（让打码这条口径在自带合成数据上可复跑验证）；不需要可直接清空为 []。",
 
   "timezone_utc_offset_minutes": 480,
   "_timezone_utc_offset_minutes": "时区口径：固定 UTC 偏移（分钟）。480 = UTC+8。刻意不用命名时区：零依赖项目在 Windows 上没有 tzdata，且固定偏移才满足『同一输入 + 同一配置 = 同一输出』。换成你的实际时区即可。",

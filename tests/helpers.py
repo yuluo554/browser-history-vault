@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import subprocess
@@ -12,8 +13,49 @@ from typing import Any, Dict, List, Optional, Sequence
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src"
 PACKAGE_ROOT = SRC_ROOT / "browser_history_vault"
+TOOLS_ROOT = REPO_ROOT / "tools"
 EXAMPLE_CONFIG = REPO_ROOT / "config.example.json"
 DATA_ROOT = REPO_ROOT / "data"
+FIXTURE_DIR = DATA_ROOT / "fixtures" / "synthetic"
+GENERATOR = TOOLS_ROOT / "gen_synthetic_history.py"
+BENCH = TOOLS_ROOT / "bench.py"
+
+
+def load_tool(name: str):
+    """按文件路径加载 `tools/` 下的脚本（tools 不是包，不能 `import tools.x`）。
+
+    刻意不用"把 tools 塞进 sys.path 再 import"：那会让同名脚本互相遮蔽，
+    也会让测试依赖 cwd。
+
+    必须先登记进 `sys.modules` 再 `exec_module`：`@dataclass` 会通过
+    `sys.modules[cls.__module__]` 取模块命名空间，未登记时直接 AttributeError
+    （实测踩到：bench.py 里的 Check/SuiteResult 在加载期就炸）。
+    """
+    path = TOOLS_ROOT / ("%s.py" % name)
+    module_name = "bhvault_tool_%s" % name
+    spec = importlib.util.spec_from_file_location(module_name, str(path))
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(module_name, None)
+        raise
+    return module
+
+
+def run_tool(name: str, args: Sequence[str], cwd: Optional[Path] = None) -> subprocess.CompletedProcess:
+    """以子进程跑 tools 脚本（真实退出码可断言）。"""
+    env = dict(os.environ)
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env["PYTHONUTF8"] = "1"
+    return subprocess.run(
+        [sys.executable, str(TOOLS_ROOT / ("%s.py" % name))] + list(args),
+        cwd=str(cwd if cwd is not None else REPO_ROOT),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
 
 
 def run_module(
@@ -91,8 +133,12 @@ def _is_generated(path: Path) -> bool:
 
 
 def text_files(root: Path) -> List[Path]:
-    """仓库内需要过"行尾/编码"门禁的文本文件（跳过 .git 与生成物目录）。"""
-    suffixes = {".py", ".md", ".json", ".toml", ".yml", ".yaml", ".cfg", ".txt", ".in"}
+    """仓库内需要过"行尾/编码"门禁的文本文件（跳过 .git 与生成物目录）。
+
+    `.jsonl` 也在扫描面内：它是**逐字节冻结**的规范化导出，行尾漂移会让
+    "重生成逐字节一致"跨平台翻红——正是这组门禁要防的那类漂移。
+    """
+    suffixes = {".py", ".md", ".json", ".jsonl", ".toml", ".yml", ".yaml", ".cfg", ".txt", ".in"}
     found: List[Path] = []
     for path in sorted(root.rglob("*")):
         if not path.is_file():
