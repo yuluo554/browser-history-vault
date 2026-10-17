@@ -1,0 +1,53 @@
+{
+  "_note": "本文件是全部『数值口径』的唯一来源。复制为 config.json 后按需修改；代码、报告、README 一律引用此处，禁止第二份手写口径。以下划线开头的键是注释位，不参与校验。",
+  "_cli_override": "显式 --config <path> 时只认该文件；无效即退出码 2，不回落其他来源。",
+  "config_version": 1,
+
+  "session_gap_minutes": 30,
+  "_session_gap_minutes": "会话切分间隔：相邻访问间隔超过该值即切分为新会话。模块③④共用此口径（含边界：恰好等于该值不切分，> 才切分）。",
+
+  "forgotten": {
+    "days_threshold": 90,
+    "min_visits": 3,
+    "min_distinct_days": 2,
+    "_note": "『遗忘的宝藏』判定口径三件套，全部取自此处：历史高价值 = 总访问次数 >= min_visits 且 访问跨越 >= min_distinct_days 个不同日期（区分『长期在用』与『某天狂刷』）；近 days_threshold 天未访问即命中。报告中必须显示本次实际取值。边界：恰好等于该天数不算遗忘（严格大于才命中）。"
+  },
+
+  "private_domains": [
+    "localhost",
+    "127.0.0.1",
+    "mail.google.com",
+    "outlook.live.com",
+    "mail.qq.com"
+  ],
+  "_private_domains": "私密域名清单：命中（含子域）的记录在归档与报告中一律排除，不得静默关闭。请按自己的实际情况增删（例如你的网银、邮箱、内部系统域名）。IPv6 字面量暂不支持，须写成主机名。",
+  "_private_domains_matching": "匹配语义：host == 项 或 host 以 '.' + 项 结尾（子域一并排除）。",
+
+  "sensitive_domains": [],
+  "_sensitive_domains": "敏感域名清单：不在报告中直接显示，改为打码呈现（与『完全排除』的 private_domains 是两回事）。",
+
+  "timezone_utc_offset_minutes": 480,
+  "_timezone_utc_offset_minutes": "时区口径：固定 UTC 偏移（分钟）。480 = UTC+8。刻意不用命名时区：零依赖项目在 Windows 上没有 tzdata，且固定偏移才满足『同一输入 + 同一配置 = 同一输出』。换成你的实际时区即可。",
+
+  "random_seed": 20261017,
+  "_random_seed": "固定随机种子：任何含随机初始化的步骤（如聚类）必须取自此处，保证同输入复跑一致。",
+
+  "search": {
+    "ngram_n": 2,
+    "_ngram_n": "中文检索兜底的字 n-gram 粒度（不引入分词库、不联网词典）。"
+  },
+
+  "cluster": {
+    "min_df": 2,
+    "max_features": 500,
+    "top_terms": 10,
+    "similarity_threshold": 0.35,
+    "_note": "主题聚类阈值：全部取自此处，结果按确定性排序（同分同序），报告显示实际取值。"
+  },
+
+  "report": {
+    "top_n": 20,
+    "weekday_start": "monday",
+    "_note": "报告口径：top_n = 各类榜单显示条数；weekday_start = 星期热力的起算日（monday / sunday）。"
+  }
+}

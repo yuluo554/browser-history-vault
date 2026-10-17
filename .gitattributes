@@ -1,0 +1,17 @@
+# 源码归一为 LF（跨平台"逐字节一致"的地基）。
+* text=auto eol=lf
+
+# 明确文本类型（避免被当成二进制而跳过归一）。
+*.py    text eol=lf
+*.md    text eol=lf
+*.json  text eol=lf
+*.toml  text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.txt   text eol=lf
+
+# 被台账登记过 sha256 的快照/二进制必须按原字节保存（-text 防 EOL 改写）：
+# 冻结的合成 History 库（*.db）与任何官方原件快照一旦入仓，就必须在这里显式标 -text。
+*.db    binary
+*.sqlite binary
+*.sqlite3 binary

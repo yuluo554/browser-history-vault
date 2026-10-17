@@ -1,0 +1,49 @@
+name: CI
+
+# 事件面：branch push 与 tag push 各产生一条 run（同 sha 两条是合法的，两条都要绿）。
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: py${{ matrix.python-version }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.8", "3.12"]
+    env:
+      # 编码加固的第三层：入口 reconfigure 救"我们敲的命令"，子进程显式 encoding 救子进程，
+      # 这一层救 CI 里全部步骤（CI 的 python 不是我们敲的，没有 -X utf8）。
+      PYTHONUTF8: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: 准备打包工具链
+        run: python -m pip install --upgrade pip setuptools wheel
+
+      - name: 安装本包与开发依赖（测试面 = 安装面 = README 指令面）
+        run: python -m pip install -e ".[dev]"
+
+      - name: 全量测试（双解释器矩阵）
+        run: python -m pytest
+
+      # 这一步覆盖裸 console script 通路：`python -m <pkg>` 与裸 `<pkg>` 的 sys.path
+      # 来源不同，"前者过了"证明不了"后者能跑"（安装面第四面）。--require-console-script
+      # 让"console script 没进 PATH"变红，而不是静默 SKIP。
+      - name: 离线 CLI 冒烟（两条通路 × 全部已交付命令）
+        run: python tools/smoke_cli.py --require-console-script
+
+# 刻意不放进 CI 的：tools/check_release.py（发布终态门禁）。
+# 判据 = "这道门在当前时点本来就该红吗"——tag 未打、Release 未建时它必然红，
+# 挂进来只会让每次正常提交都红且没有信息量；它的可跑性与可证伪性由
+# tests/test_release_gate.py 覆盖，正式执行时机是发布里程碑收尾。
