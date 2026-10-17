@@ -1,0 +1,68 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+build/
+dist/
+*.spec
+*.egg
+pip-wheel-metadata/
+site/
+
+# 运行产物与归档数据（个人行为数据，永不入仓）
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+output/
+reports/
+release/
+*.log
+.tmp/
+*.bak
+selftest.json
+
+# 真实浏览器历史副本与本地档案（绝不提交）
+History
+History-wal
+History-shm
+history-copy/
+vault-local/
+samples-local/
+archive-local/
+data/**/_local/
+data/**/_private/
+
+# 生成报告与导出（含合成样本除外，合成报告放 data/fixtures 下显式提交）
+*.html
+!data/fixtures/**/*.html
+exports/
+*.csv
+
+# 环境与密钥
+.env
+.env.*
+*.key
+*_private/
+config.local.*
+
+# 编辑器与系统文件
+.idea/
+.vscode/
+Thumbs.db
+Desktop.ini
+.DS_Store
