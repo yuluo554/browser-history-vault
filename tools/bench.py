@@ -28,6 +28,13 @@
 本阶段（数据先行）只交付**数据**：B0 测的是"真值能否由**独立参照实现**从规范化导出
 复算出来"——它不依赖任何引擎代码，是数据自身的完整性门。B1–B5 各自需要模块①–⑤，
 按里程碑逐个把 `enabled` 翻成 true 并补上可证伪探活（`plan/05` §7）。
+
+## B1 的两层（M2 起启用）
+
+- **样本驱动**：读 `assumptions/archive_idempotence.json` 的期望，对冻结 fixtures
+  真跑归档，逐条核对 `visits_added_per_run` / 总量；
+- **规则驱动**（不读真值库）：重排输入顺序 / 分批 / 中断续跑 —— 专治"样本没覆盖的端点"。
+  三条规则用例都在**临时目录**里跑，绝不碰冻结产物。
 """
 
 from __future__ import annotations
@@ -48,7 +55,13 @@ if str(SRC_ROOT) not in sys.path:  # 裸 clone（未安装）下也能跑：tool
     sys.path.insert(0, str(SRC_ROOT))
 
 from browser_history_vault import reference  # noqa: E402  (必须在上面的 sys.path 之后)
+from browser_history_vault import archive as archive_module  # noqa: E402
+from browser_history_vault import snapshot as snapshot_module  # noqa: E402
+from browser_history_vault import storage  # noqa: E402
+from browser_history_vault.archive import archive_source, build_status, gap_ranges  # noqa: E402
+from browser_history_vault.normalizer import normalize_database  # noqa: E402
 from browser_history_vault.selftest import FIXTURE_DIR, verify_data_ledger  # noqa: E402
+from browser_history_vault.snapshot import source_from_dir  # noqa: E402
 
 DEFAULT_DATA_ROOT = REPO_ROOT / "data"
 MANIFEST_NAME = "manifest.json"
@@ -188,6 +201,431 @@ SUITE_RUNNERS: Dict[str, Callable[[Path, Dict[str, Any]], List[Check]]] = {
 
 
 # --------------------------------------------------------------------------
+# 套件 B1：归档幂等（样本驱动 + 规则驱动）
+# --------------------------------------------------------------------------
+
+#: B1 用的固定"归档时刻"（纪元微秒）：**常量**，不读时钟。
+#: 每个用例用自己的值，保证 `archives` 的 UNIQUE 不会跨用例串味。
+B1_STARTED_AT_US = 13400000000000000
+
+#: B1 用到的来源（相对 fixtures 目录）与来源名。
+B1_SOURCES: Tuple[Tuple[str, str], ...] = (
+    ("chrome", "chrome"),
+    ("edge", "edge"),
+    ("chrome-running", "chrome"),
+)
+
+
+def _b1_config(manifest: Dict[str, Any]) -> Any:
+    """B1 的口径来源：**冻结台账里登记的那份 params**（数据非代码）。
+
+    刻意不读仓库里的 `config.example.json`：基准要能对任意 fixtures 目录跑
+    （`--fixture` 指向别处时，仓库配置与那份数据可能不是同一次生成的）。
+    """
+    params = manifest["source_config"]["params"]
+    return {
+        "private_domains": tuple(params["private_domains"]),
+        "sensitive_domains": tuple(params["sensitive_domains"]),
+        "offset_minutes": int(params["timezone_utc_offset_minutes"]),
+    }
+
+
+def _b1_archive(
+    fixture_dir: Path,
+    relative: str,
+    browser: str,
+    archive_db: Path,
+    *,
+    started_at_us: int,
+    config: Dict[str, Any],
+    method: str = "auto",
+) -> Any:
+    source = source_from_dir(fixture_dir / relative, key=browser)
+    return archive_source(
+        source,
+        archive_db,
+        now_us=started_at_us,
+        private_domains=config["private_domains"],
+        sensitive_domains=config["sensitive_domains"],
+        offset_minutes=config["offset_minutes"],
+        method=method,
+    )
+
+
+def _b1_truth(manifest: Dict[str, Any], fixture_dir: Path) -> Dict[str, Any]:
+    bundle = json.loads(
+        (fixture_dir / "assumptions" / "archive_idempotence.json").read_text(encoding="utf-8")
+    )
+    expected_total = int(manifest["totals"]["visits"])
+    return {"bundle": bundle, "expected_total": expected_total}
+
+
+def _b1_samples(manifest: Dict[str, Any], fixture_dir: Path) -> List[Check]:
+    """样本驱动层：逐条真跑真值里登记的期望。
+
+    真值给的是"全量跑一遍"的口径（`visits_added_per_run: [367, 0]`），因此这一层
+    把三个来源**合起来**归档到同一个库里跑，总数必须等于台账的 `totals.visits`。
+    """
+    checks: List[Check] = []
+    truth = _b1_truth(manifest, fixture_dir)
+    expected_total = truth["expected_total"]
+    config = _b1_config(manifest)
+    samples = {sample["id"]: sample for sample in truth["bundle"]["samples"]}
+
+    with tempfile.TemporaryDirectory(prefix="bhvault-bench-b1-sample-") as tmp:
+        archive_db = Path(tmp) / "archive.db"
+        runs: List[int] = []
+        first_run_counts: Dict[str, int] = {}
+        for run_index in range(2):
+            added = 0
+            for relative, browser in B1_SOURCES:
+                result = _b1_archive(
+                    fixture_dir,
+                    relative,
+                    browser,
+                    archive_db,
+                    started_at_us=B1_STARTED_AT_US + run_index,
+                    config=config,
+                )
+                added += result.visits_added
+                if run_index == 0:
+                    first_run_counts[relative] = result.visits_added
+            runs.append(added)
+
+        sample = samples.get("idem-same-snapshot-twice")
+        expected_runs = (sample or {}).get("expected", {}).get("visits_added_per_run")
+        checks.append(
+            Check(
+                "sample-same-snapshot-twice",
+                expected_runs == runs,
+                "连跑两次的 visits_added：期望 %s，实得 %s" % (expected_runs, runs),
+            )
+        )
+        if expected_runs is None:
+            checks.append(Check("sample-expected-present", False, "真值缺 visits_added_per_run（样本失效）"))
+        else:
+            checks.append(
+                Check(
+                    "sample-expected-present",
+                    True,
+                    "真值给出 %d 条样本，其中幂等期望 %s" % (len(samples), expected_runs),
+                )
+            )
+
+        connection = storage.connect(archive_db)
+        try:
+            visits_rows = storage.count_rows(connection, "visits")
+            id_map_first = storage.url_id_map(connection)
+        finally:
+            connection.close()
+        checks.append(
+            Check(
+                "sample-total-after-runs",
+                visits_rows == expected_total,
+                "两次归档后 visits 行数 %d（台账总量 %d）" % (visits_rows, expected_total),
+            )
+        )
+
+        # url_id 稳定：第三次归档后映射必须逐项不变
+        for relative, browser in B1_SOURCES:
+            _b1_archive(
+                fixture_dir,
+                relative,
+                browser,
+                archive_db,
+                started_at_us=B1_STARTED_AT_US + 100,
+                config=config,
+            )
+        connection = storage.connect(archive_db)
+        try:
+            id_map_third = storage.url_id_map(connection)
+        finally:
+            connection.close()
+        checks.append(
+            Check(
+                "sample-url-id-stable",
+                id_map_first == id_map_third,
+                "%d 个 URL 的 url_id 在第三次归档后%s"
+                % (len(id_map_first), "完全不变" if id_map_first == id_map_third else "发生了漂移"),
+            )
+        )
+    return checks
+
+
+def _b1_rules(manifest: Dict[str, Any], fixture_dir: Path) -> List[Check]:
+    """规则驱动层：不读真值库，专治"样本没覆盖的端点"。
+
+    三条用例：重排输入顺序 / 分批归档 / 中断续跑。每条都在独立临时库上跑，
+    与样本驱动层互不干扰。
+    """
+    checks: List[Check] = []
+    config = _b1_config(manifest)
+
+    # 1) 重排输入顺序：把来源顺序倒过来 → 结果必须与正序一致（含 url_id 映射）
+    with tempfile.TemporaryDirectory(prefix="bhvault-bench-b1-order-") as tmp:
+        forward_db = Path(tmp) / "forward.db"
+        reverse_db = Path(tmp) / "reverse.db"
+        for order, target in ((B1_SOURCES, forward_db), (tuple(reversed(B1_SOURCES)), reverse_db)):
+            for index, (relative, browser) in enumerate(order):
+                _b1_archive(
+                    fixture_dir,
+                    relative,
+                    browser,
+                    target,
+                    started_at_us=B1_STARTED_AT_US + index,
+                    config=config,
+                )
+        forward = _b1_dump(forward_db)
+        reverse = _b1_dump(reverse_db)
+        checks.append(
+            Check(
+                "rule-reordered-sources",
+                forward == reverse,
+                "来源顺序颠倒后：visits %d/%d，url_id 映射%s"
+                % (
+                    len(forward["visits"]),
+                    len(reverse["visits"]),
+                    "一致" if forward["url_ids"] == reverse["url_ids"] else "不一致",
+                ),
+            )
+        )
+
+    # 2) 分批：按 URL 分两批写入同一来源 → 与一次写入结果一致
+    with tempfile.TemporaryDirectory(prefix="bhvault-bench-b1-batch-") as tmp:
+        whole_db = Path(tmp) / "whole.db"
+        batch_db = Path(tmp) / "batch.db"
+        whole = _b1_archive(
+            fixture_dir, "chrome", "chrome", whole_db,
+            started_at_us=B1_STARTED_AT_US, config=config,
+        )
+        rows = _b1_normalized(fixture_dir / "chrome", "chrome")
+        rows.sort(key=lambda row: row["url"])
+        midpoint = len(rows) // 2
+        batches = (rows[:midpoint], rows[midpoint:])
+        added = 0
+        for index, batch in enumerate(batches):
+            added += _b1_write_batch(batch, batch_db, config, B1_STARTED_AT_US + index)
+        checks.append(
+            Check(
+                "rule-batched-writes",
+                added == whole.visits_added,
+                "分 %d 批写入合计 %d 条（一次写入 %d 条）" % (len(batches), added, whole.visits_added),
+            )
+        )
+        batch_visits = _b1_dump(batch_db)["visits"]
+        whole_visits = _b1_dump(whole_db)["visits"]
+        checks.append(
+            Check(
+                "rule-batched-total",
+                batch_visits == whole_visits,
+                "分批与一次写入的行集%s" % ("一致" if batch_visits == whole_visits else "不一致"),
+            )
+        )
+
+    # 3) 中断续跑：写完一半后"中断"（不提交的库被丢弃）→ 重跑全量仍得到完整结果
+    with tempfile.TemporaryDirectory(prefix="bhvault-bench-b1-resume-") as tmp:
+        resume_db = Path(tmp) / "resume.db"
+        first = _b1_archive(
+            fixture_dir, "chrome", "chrome", resume_db,
+            started_at_us=B1_STARTED_AT_US, config=config,
+        )
+        # 模拟"上次只跑了一半"：把库删掉重来（不是增量续跑，而是确认重复劳动不出错）
+        resume_db.unlink()
+        again = _b1_archive(
+            fixture_dir, "chrome", "chrome", resume_db,
+            started_at_us=B1_STARTED_AT_US + 1, config=config,
+        )
+        checks.append(
+            Check(
+                "rule-interrupted-restart",
+                first.visits_added == again.visits_added and again.visits_added > 0,
+                "中断后重跑：首次 %d 条，重跑 %d 条（必须相同且非零）"
+                % (first.visits_added, again.visits_added),
+            )
+        )
+    return checks
+
+
+def _b1_normalized(browser_dir: Path, browser: str) -> List[Dict[str, Any]]:
+    """取一份快照 → 规范化行（快照句柄登记在 `_BENCH_SNAPSHOTS`，由套件收尾统一清理）。"""
+    from browser_history_vault.snapshot import take_snapshot
+
+    handle = take_snapshot(source_from_dir(browser_dir, key=browser))
+    _BENCH_SNAPSHOTS.append(handle)
+    return normalize_database(handle.db_path, source_browser=browser, browser_dir=browser_dir)
+
+
+_BENCH_SNAPSHOTS: List[Any] = []
+
+
+def _b1_write_batch(
+    rows: Sequence[Dict[str, Any]], archive_db: Path, config: Dict[str, Any], started_at_us: int
+) -> int:
+    """把一批规范化行直接写进归档库（分批用例的最小写入面）。"""
+    visits = [
+        storage.NewVisit(
+            url=row["url"],
+            title=row["title"],
+            domain=row["host"],
+            visit_time_us=int(row["visit_time_us"]),
+            transition=int(row["transition"]),
+            visit_duration_us=int(row["visit_duration_us"]),
+            source_browser=row["source_browser"],
+            source_profile=row["source_profile"],
+        )
+        for row in rows
+    ]
+    connection = storage.connect(archive_db)
+    try:
+        _, counters = storage.record_archive(
+            connection,
+            visits,
+            source_browser="chrome",
+            source_profile="Default",
+            started_at_us=started_at_us,
+            visits_seen=len(rows),
+            private_records_seen=0,
+            day_of=lambda us: _day(us, config["offset_minutes"]),
+        )
+    finally:
+        connection.close()
+    return counters.visits_added
+
+
+def _day(us: int, offset_minutes: int) -> str:
+    from browser_history_vault.timeutil import local_date_of_us
+
+    return local_date_of_us(int(us), int(offset_minutes)).isoformat()
+
+
+def _b1_dump(archive_db: Path) -> Dict[str, Any]:
+    connection = storage.connect(archive_db)
+    try:
+        return {
+            "visits": storage.visit_rows(connection),
+            "url_ids": storage.url_id_map(connection),
+        }
+    finally:
+        connection.close()
+
+
+def run_suite_b1(fixture_dir: Path, manifest: Dict[str, Any]) -> List[Check]:
+    """归档幂等：只读 + 幂等 + url_id 稳定 + 覆盖区间对账。
+
+    **每一段都包住异常**：套件崩掉只说明"这一项没跑完"，不等于"整条基准不可用"。
+    把异常转成一条失败的检查项，探活（以及日常排查）才能看到"红在哪一项"，
+    而不是拿到一个 traceback。这一点对可证伪性很关键：注入缺陷后基准**报未达标**
+    才算检出，如果它直接崩掉，退出码虽然是 1，但报告里没有任何可指认的失败项。
+    """
+    checks: List[Check] = []
+    try:
+        checks.extend(_guard("samples", lambda: _b1_samples(manifest, fixture_dir)))
+        checks.extend(_guard("rules", lambda: _b1_rules(manifest, fixture_dir)))
+        checks.extend(_guard("source-untouched", lambda: [_b1_source_untouched(fixture_dir, manifest)]))
+        checks.extend(_guard("coverage", lambda: [_b1_coverage_matches_manifest(fixture_dir, manifest)]))
+    finally:
+        _cleanup_bench_snapshots()
+    return checks
+
+
+def _guard(code: str, action: Callable[[], List[Check]]) -> List[Check]:
+    """跑一段检查；异常转成一条失败项（而不是让整个套件崩掉）。"""
+    try:
+        return action()
+    except Exception as exc:  # noqa: BLE001 - 套件要能报告"哪一段坏了"
+        return [Check("%s-error" % code, False, "%s 段未能跑完：%s" % (code, exc))]
+
+
+def _b1_source_untouched(fixture_dir: Path, manifest: Dict[str, Any]) -> Check:
+    """原库零写入：归档前后每个源文件的 mtime 与字节 sha256 都不变。
+
+    **值从盘上实读**（不用台账里的 sha256，那是文本产物的）：这条检查要能抓住
+    "归档顺手把源库改了"——最典型的形态是 SQLite 在源目录里创建 `-shm`。
+    """
+    import hashlib
+
+    def stamps() -> Dict[str, Tuple[int, str]]:
+        result: Dict[str, Tuple[int, str]] = {}
+        for relative, _browser in B1_SOURCES:
+            directory = fixture_dir / relative
+            for path in sorted(directory.glob("History*")):
+                result["%s/%s" % (relative, path.name)] = (
+                    path.stat().st_mtime_ns,
+                    hashlib.sha256(path.read_bytes()).hexdigest(),
+                )
+        return result
+
+    before = stamps()
+    config = _b1_config(manifest)
+    with tempfile.TemporaryDirectory(prefix="bhvault-bench-b1-untouched-") as tmp:
+        for index, (relative, browser) in enumerate(B1_SOURCES):
+            _b1_archive(
+                fixture_dir, relative, browser, Path(tmp) / "a.db",
+                started_at_us=B1_STARTED_AT_US + index, config=config,
+            )
+    after = stamps()
+    changed = sorted(key for key in set(before) | set(after) if before.get(key) != after.get(key))
+    return Check(
+        "source-untouched",
+        not changed and bool(before),
+        "源库文件（%d 件）在归档前后%s" % (len(before), "完全未变" if not changed else "被改动：%s" % changed[:4]),
+    )
+
+
+def _b1_coverage_matches_manifest(fixture_dir: Path, manifest: Dict[str, Any]) -> Check:
+    """覆盖区间与缺口：归档库算出来的必须与台账登记的覆盖声明一致。
+
+    这是"覆盖区间如实记录"的机器可证形态（`plan/06` M2 DoD 第 ⑤条）：
+    台账说 `first/last/days_with_visits/gaps` 是什么，归档库就必须能算出同一组值。
+    """
+    config = _b1_config(manifest)
+    with tempfile.TemporaryDirectory(prefix="bhvault-bench-b1-coverage-") as tmp:
+        archive_db = Path(tmp) / "a.db"
+        for index, (relative, browser) in enumerate(B1_SOURCES):
+            _b1_archive(
+                fixture_dir, relative, browser, archive_db,
+                started_at_us=B1_STARTED_AT_US + index, config=config,
+            )
+        status = build_status(archive_db)
+    expected = manifest["coverage"]
+    problems: List[str] = []
+    if status.first_local_date != expected["first_local_date"]:
+        problems.append("first %s ≠ %s" % (status.first_local_date, expected["first_local_date"]))
+    if status.last_local_date != expected["last_local_date"]:
+        problems.append("last %s ≠ %s" % (status.last_local_date, expected["last_local_date"]))
+    if status.days_with_visits != int(expected["days_with_visits"]):
+        problems.append("有数据天数 %d ≠ %d" % (status.days_with_visits, expected["days_with_visits"]))
+    if status.interval_days != int(expected["interval_days"]):
+        problems.append("区间 %d ≠ %d" % (status.interval_days, expected["interval_days"]))
+    if status.gap_days_total != int(expected["gap_days_total"]):
+        problems.append("缺口天数 %d ≠ %d" % (status.gap_days_total, expected["gap_days_total"]))
+    # 缺口段：台账是"全库视角"的段；归档库的 coverage 按来源各存一份，
+    # 因此先取"任一来源有数据"的日并集，再在并集上算缺口（口径与生成侧一致）。
+    present_days = sorted({str(row["day"]) for row in status.coverage})
+    merged = gap_ranges(present_days)
+    expected_gaps = [(item["from"], item["to"], int(item["days"])) for item in expected["gaps"]]
+    if merged != expected_gaps:
+        problems.append("缺口段 %d 段 ≠ 台账 %d 段" % (len(merged), len(expected_gaps)))
+    return Check(
+        "coverage-matches-manifest",
+        not problems,
+        "；".join(problems[:4]) if problems else
+        "覆盖区间 %s → %s（%d 天，有数据 %d 天，缺口 %d 天 / %d 段）与台账一致"
+        % (status.first_local_date, status.last_local_date, status.interval_days,
+           status.days_with_visits, status.gap_days_total, len(merged)),
+    )
+
+
+def _cleanup_bench_snapshots() -> None:
+    for handle in _BENCH_SNAPSHOTS:
+        handle.close()
+    _BENCH_SNAPSHOTS.clear()
+
+
+SUITE_RUNNERS["B1"] = run_suite_b1
+
+
+# --------------------------------------------------------------------------
 # 编排
 # --------------------------------------------------------------------------
 
@@ -318,33 +756,156 @@ PROBE_MUTATIONS: Tuple[Callable[[Path], str], ...] = (
     _mutation_delete_asset,
 )
 
+#: B1 的探活缺陷（**打在被测实现的消费处**，不是打在数据上）。
+#: 每条都模拟一种"基准恒绿"的真实形态，并在 `finally` 里还原：
+#:
+#: | 注入 | 对应真实缺陷 |
+#: |---|---|
+#: | 重复记录被算成"新增" | 计数口径写错：库里没重复，但 `visits_added` 谎报 → 幂等门失效 |
+#: | 覆盖计数不落库 | `bump_coverage` 漏调用 → `status` 永远说"没有缺口" |
+#: | 快照顺手改动源库 | 在源目录里 checkpoint / 建 `-shm` → 只读红线被破坏 |
+B1_PROBE_NAMES: Tuple[str, ...] = (
+    "idempotence-counter-inflated",
+    "coverage-not-recorded",
+    "source-touched-by-snapshot",
+)
+
+
+def _b1_probe_mutation(name: str) -> Tuple[str, Callable[[], None], Callable[[], None]]:
+    """返回（描述, 注入函数, 还原函数）。"""
+    if name == "idempotence-counter-inflated":
+        original = storage.insert_visit
+
+        def inject() -> None:
+            def lying(connection, visit, *, url_id, archive_id):
+                original(connection, visit, url_id=url_id, archive_id=archive_id)
+                return True  # 谎报"新增"（库里其实被 IGNORE 掉了）
+
+            storage.insert_visit = lying  # type: ignore[assignment]
+
+        def restore() -> None:
+            storage.insert_visit = original  # type: ignore[assignment]
+
+        return "重复记录被算成『新增』（幂等计数谎报）", inject, restore
+
+    if name == "coverage-not-recorded":
+        original = storage.bump_coverage
+
+        def inject() -> None:
+            storage.bump_coverage = lambda *a, **k: None  # type: ignore[assignment]
+
+        def restore() -> None:
+            storage.bump_coverage = original  # type: ignore[assignment]
+
+        return "覆盖计数不落库（status 会谎称没有缺口）", inject, restore
+
+    if name == "source-touched-by-snapshot":
+        original = snapshot_module.take_snapshot
+        # 只记**第一次**触碰前的 mtime：探活会对同一来源调用多次，
+        # 每次都记录的话，最后一次"还原"写回的是已经被改过的值（实测踩到）。
+        saved_mtime: Dict[str, int] = {}
+
+        def inject() -> None:
+            def touching(source, tmp_root=None, *, method="auto"):
+                handle = original(source, tmp_root, method=method)
+                # 模拟"SQLite 在源目录里建 -shm"这类真实的只读红线破坏：
+                # 不改内容，只改 mtime —— 这正是"随手打开一下源库"留下的痕迹。
+                path = str(source.history_file)
+                saved_mtime.setdefault(path, source.history_file.stat().st_mtime_ns)
+                os.utime(path, None)
+                return handle
+
+            snapshot_module.take_snapshot = touching  # type: ignore[assignment]
+            archive_module.take_snapshot = touching  # type: ignore[assignment]
+
+        def restore() -> None:
+            snapshot_module.take_snapshot = original  # type: ignore[assignment]
+            archive_module.take_snapshot = original  # type: ignore[assignment]
+            # 探活不得把痕迹留在冻结产物上：把 mtime 改回去（mtime 不进 git，
+            # 但"跑一次基准就把 fixtures 的时间戳改了"会让后续对账失去参照）。
+            for path, mtime_ns in saved_mtime.items():
+                try:
+                    os.utime(path, ns=(mtime_ns, mtime_ns))
+                except OSError:  # pragma: no cover
+                    pass
+
+        return "快照顺手改动了源库（mtime 变了）", inject, restore
+
+    raise BenchError("未登记的 B1 探活项：%s" % name)
+
+
+def run_probe_b1(fixture_dir: Path, manifest: Dict[str, Any]) -> List[Check]:
+    """B1 可证伪探活：逐条注入缺陷 → B1 必须报未达标。
+
+    探活打在**消费处**（`storage.insert_visit` / `storage.bump_coverage` /
+    `snapshot.take_snapshot` 这些真被归档链路调用的引用），打在定义处不生效（`plan/05` §7）。
+    """
+    results: List[Check] = []
+    for name in B1_PROBE_NAMES:
+        description, inject, restore = _b1_probe_mutation(name)
+        try:
+            inject()
+            try:
+                checks = run_suite_b1(fixture_dir, manifest)
+            finally:
+                restore()
+        except BenchError as exc:
+            results.append(Check("probe-%s" % name, False, "注入失败：%s" % exc))
+            continue
+        except Exception as exc:  # noqa: BLE001 - 探活失败要报出来，不能崩掉基准
+            results.append(Check("probe-%s" % name, False, "注入后基准崩溃：%s" % exc))
+            continue
+        failed = [check.code for check in checks if not check.ok]
+        results.append(
+            Check(
+                "probe-%s" % name,
+                bool(failed),
+                "%s → %s" % (
+                    description,
+                    "基准报未达标（%s）" % ", ".join(failed[:3]) if failed else "基准仍报达标（探活失效）",
+                ),
+            )
+        )
+    return results
+
 
 def run_probe(suite_ids: Sequence[str], fixture_dir: Path, manifest: Dict[str, Any],
               registry: Optional[Dict[str, Any]] = None) -> List[Check]:
-    """逐条注入缺陷（从盘上实算值派生），要求基准**必须**报未达标。"""
+    """逐条注入缺陷（从盘上实算值派生），要求基准**必须**报未达标。
+
+    B0 的探活打在**数据**上（取反真值、删导出、抬门槛、删产物）；
+    B1 的探活打在**实现**上（见 `run_probe_b1`）。两类都要有：只打数据会漏掉
+    "代码写错但数据没动"的形态，只打实现会漏掉"数据被改但代码照跑"的形态。
+
+    **每条探活只跑它针对的那一个套件**（B0 的数据变异会删掉 assumptions，
+    B1 读不到真值就会崩——那不是"检出"，而是"探活自己把基准搞坏了"）。
+    """
     checks: List[Check] = []
-    for mutation in PROBE_MUTATIONS:
-        with tempfile.TemporaryDirectory(prefix="bhvault-bench-probe-") as tmp:
-            target = Path(tmp) / "synthetic"
-            shutil.copytree(str(fixture_dir), str(target))
-            try:
-                description = mutation(target)
-            except (OSError, ValueError, KeyError) as exc:
-                checks.append(Check(mutation.__name__, False, "注入失败：%s" % exc))
-                continue
-            if not description:
-                checks.append(Check(mutation.__name__, False, "注入未命中任何可改之处（探活形同虚设）"))
-                continue
-            mutated_manifest = load_manifest(target)
-            results = run_suites(suite_ids, target, mutated_manifest, registry=registry)
-            detected = exit_code(results) != EXIT_OK
-            checks.append(
-                Check(
-                    mutation.__name__,
-                    detected,
-                    "%s → %s" % (description, "基准报未达标（探活有效）" if detected else "基准仍报达标（探活失效：这就是假门）"),
+    if "B0" in suite_ids:
+        for mutation in PROBE_MUTATIONS:
+            with tempfile.TemporaryDirectory(prefix="bhvault-bench-probe-") as tmp:
+                target = Path(tmp) / "synthetic"
+                shutil.copytree(str(fixture_dir), str(target))
+                try:
+                    description = mutation(target)
+                except (OSError, ValueError, KeyError) as exc:
+                    checks.append(Check(mutation.__name__, False, "注入失败：%s" % exc))
+                    continue
+                if not description:
+                    checks.append(Check(mutation.__name__, False, "注入未命中任何可改之处（探活形同虚设）"))
+                    continue
+                mutated_manifest = load_manifest(target)
+                results = run_suites(["B0"], target, mutated_manifest, registry=registry)
+                detected = exit_code(results) != EXIT_OK
+                checks.append(
+                    Check(
+                        mutation.__name__,
+                        detected,
+                        "%s → %s" % (description, "基准报未达标（探活有效）" if detected else "基准仍报达标（探活失效：这就是假门）"),
+                    )
                 )
-            )
+    if "B1" in suite_ids:
+        checks.extend(run_probe_b1(fixture_dir, manifest))
     return checks
 
 

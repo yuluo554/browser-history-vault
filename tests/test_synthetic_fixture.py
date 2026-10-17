@@ -482,11 +482,18 @@ def test_manifest_declares_pending_suites_with_reasons(manifest):
     """未启用套件必须显式登记 + 写明原因（空分母不得冒充通过）。"""
     suites = manifest["bench"]["suites"]
     assert suites["B0"]["enabled"] is True
+    assert suites["B1"]["enabled"] is True, "B1 随归档模块启用（M2）"
     enabled = [name for name, config in suites.items() if config.get("enabled")]
-    assert enabled == ["B0"], "本阶段只应启用 B0，实际启用：%s" % enabled
-    for name in ("B1", "B2", "B3", "B4", "B5"):
+    assert enabled == ["B0", "B1"], "本阶段只应启用 B0/B1，实际启用：%s" % enabled
+    for name in ("B2", "B3", "B4", "B5"):
         assert suites[name]["enabled"] is False
         assert suites[name]["not_enabled_reason"].strip()
+    # B1 的门槛随数据下发（改门槛 = 改数据 + 重生成），不是写死在基准代码里
+    b1 = suites["B1"]
+    assert b1["min_detection_rate"] == 1.0
+    assert b1["max_false_positive"] == 0.0
+    assert int(b1["required_second_run_added"]) == 0
+    assert b1["notes"].strip()
 
 
 def test_manifest_registers_thresholds_used_by_bench(manifest):

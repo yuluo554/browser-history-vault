@@ -84,7 +84,7 @@
 | 规范化导出（**逐字节冻结**） | ✅ 已落地 | `canonical/visits.jsonl`（367 行）、`canonical/counts.json` |
 | 植入真值（九类） | ✅ 已落地 | `assumptions/*.json`（68 条样本，含 26 条反例） |
 | 台账（种子/覆盖/门槛/sha256） | ✅ 已落地 | `manifest.json` |
-| 基准套件 | 🔶 部分 | B0 已启用（数据底座与真值一致性）；B1–B5 随各自模块翻 enabled |
+| 基准套件 | 🔶 部分 | **B0 + B1 已启用**（真值复算 / 归档幂等）；B2–B5 随各自模块翻 enabled |
 | 真实浏览器库 | 🚫 永不入仓 | `.gitignore` 封死 `History*` / `*.db`，仅白名单放行 `data/fixtures/synthetic/**` |
 
 生成/复跑：
@@ -92,7 +92,7 @@
 ```bash
 py -3.12 tools/gen_synthetic_history.py            # 生成（覆盖）fixtures
 py -3.12 tools/gen_synthetic_history.py --check     # 两层断言（CI 里跑的就是这条）
-py -3.12 tools/bench.py --only B0                   # 基准（门槛从 manifest 读）
+py -3.12 tools/bench.py --only B0 B1                # 基准（门槛从 manifest 读）
 bhvault selftest --data-root data                   # 用户命令：真读台账并复算真值
 ```
 
@@ -175,8 +175,10 @@ bhvault selftest --data-root data                   # 用户命令：真读台�
   `manifest.bench` 里，基准运行时读取：改门槛 = 改数据 + 重生成，不改代码、留痕；
 - **未启用 ≠ 通过**：B1–B5 在台账里登记 `enabled: false` + 原因，并按设计计入退出码 1
   （所以 CI 跑的是 `--only B0`，每交付一个模块把对应套件翻 enabled 并加进命令行）；
-- **探活打在消费处**：`tools/bench.py --probe` 逐条注入缺陷（值从盘上实读、不写死：
-  取反一条真值布尔、删一行导出、抬高一类门槛、删掉门槛块、删一件产物），要求基准**必须**报未达标。
+- **探活打在消费处**：`tools/bench.py --probe` 逐条注入缺陷（值从盘上实读、不写死），要求基准**必须**报未达标。
+  两类探活刻意分开（`plan/00` D38）：**B0 打在数据上**（取反一条真值布尔、删一行导出、抬高一类门槛、
+  删掉门槛块、删一件产物）；**B1 打在实现上**（幂等计数谎报、覆盖计数不落库、快照顺手改源库）——
+  只打数据会漏掉"代码写错但数据没动"，只打实现会漏掉"数据被改但代码照跑"。
 
 ### 3.6 合成库的结构（与真实 Chrome 库的差异，如实登记）
 
@@ -192,6 +194,18 @@ bhvault selftest --data-root data                   # 用户命令：真读台�
 - `chrome-running/` = 模拟"浏览器正在运行"：主库缺最新 7 条 visit，那 7 条**只存在于未折叠的
   `-wal` 里**（折叠后才与规范化导出一致）。这条不变量有测试守着
   (`test_wal_variant_really_withholds_recent_rows`)，否则"带 -wal 的变体"会退化成摆设。
+
+### 3.7 归档层对这份数据的三条消费口径（M2）
+
+| 消费方 | 用什么 | 期望（可复算） |
+|---|---|---|
+| `snapshot` / `archive` | `chrome/`、`edge/`、`chrome-running/` 三份库 | 规范化行与 `canonical/visits.jsonl` **逐字节**一致（含 WAL 折叠后）；归档前后源库文件集合 + mtime + 字节 sha256 不变 |
+| 基准 **B1** | `assumptions/archive_idempotence.json` + 台账 `coverage` | 连跑两次 `visits_added == [367, 0]`；`url_id` 三次归档后不变；覆盖区间/缺口与台账逐字段一致 |
+| `privacy`（门禁单点） | `assumptions/privacy.json` + `config.example.json` 的两份清单 | 分类与真值一致；私密记录**不进输出面**（落盘导出零私密主机）；敏感主机保留统计、打码呈现 |
+
+**"私密记录不进输出面"与"归档库留全量"不是矛盾**（`plan/00` D34）：归档库是用户自己的长期档案，
+入库前删掉会让"以后改了清单也找不回那些记录"；K26 约束的是**输出面**。两者同时成立的前提是
+`privacy.py` 是唯一门禁点，且每个输出通路都真的过它——`tests/test_privacy_gate.py` 守这一条。
 
 ---
 

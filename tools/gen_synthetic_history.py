@@ -177,12 +177,26 @@ BENCH_MIN_SAMPLES_PER_KIND: Dict[str, int] = {
 BENCH_COUNTEREXAMPLES_REQUIRED_PER_KIND = 1
 
 #: 未启用套件：必须在 manifest 里**显式声明**，基准把它们当"未启用"而不是"通过"。
+#: B1 已在 M2 翻成 enabled（归档模块交付），因此从这里移除——**移除即登记**：
+#: 它现在出现在下面的 `ENABLED_SUITES` 里，缺了它 CI 会红。
 PENDING_SUITES: Dict[str, Dict[str, str]] = {
-    "B1": {"title": "归档幂等", "reason": "归档模块尚未交付；数据侧真值已在 assumptions/archive_idempotence.json 就位"},
     "B2": {"title": "查询确定性", "reason": "检索模块尚未交付"},
     "B3": {"title": "洞察口径（会话/遗忘/热力/集中度）", "reason": "洞察模块尚未交付；数据侧真值已就位"},
     "B4": {"title": "聚类与路径", "reason": "聚类模块尚未交付；路径真值已就位"},
     "B5": {"title": "隐私与零外链", "reason": "报告模块尚未交付；隐私真值已就位"},
+}
+
+#: 已启用套件（门槛/门槛形状随数据下发；改这里 = 改数据 + 重生成）。
+#: B1 的门槛是"归档幂等"这条口径的**可测量形态**：连跑两次的第二次新增必须为 0。
+ENABLED_SUITES: Dict[str, Dict[str, Any]] = {
+    "B1": {
+        "title": "归档幂等（只读 + 幂等 + url_id 稳定 + 覆盖区间）",
+        "min_detection_rate": 1.0,
+        "max_false_positive": 0.0,
+        "required_second_run_added": 0,
+        "notes": "样本驱动：同一份快照连跑两次（visits_added 第二次必须为 0）+ 带 -wal 场景；"
+                 "规则驱动：来源顺序重排 / 分批写入 / 中断重跑；源库 mtime 与字节 sha256 必须不变",
+    },
 }
 
 
@@ -1748,6 +1762,10 @@ def generate(out_dir: Path, seed: int, anchor_text: str, config: Dict[str, Any],
                     "max_false_positive": 0.0,
                     "min_samples_per_kind": dict(BENCH_MIN_SAMPLES_PER_KIND),
                     "notes": "逐样本点名核对：期望值必须由 reference.py 从规范化导出复算得出（与生成侧实现互为交叉验证）",
+                },
+                **{
+                    suite: dict(config, enabled=True)
+                    for suite, config in ENABLED_SUITES.items()
                 },
                 **{
                     suite: {"title": value["title"], "enabled": False, "not_enabled_reason": value["reason"]}

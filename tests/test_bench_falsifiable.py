@@ -38,9 +38,10 @@ def _capture(argv, registry=None):
 
 
 def test_only_enabled_suite_exits_zero():
-    code, text = _capture(["--only", "B0"])
+    code, text = _capture(["--only", "B0", "B1"])
     assert code == bench.EXIT_OK
     assert "[达标] B0" in text
+    assert "[达标] B1" in text
     assert "[FAIL]" not in text
 
 
@@ -60,33 +61,48 @@ def test_unknown_suite_is_a_usage_error():
 
 
 def test_json_output_is_machine_readable_and_deterministic():
-    first_code, first = _capture(["--only", "B0", "--json"])
-    second_code, second = _capture(["--only", "B0", "--json"])
+    first_code, first = _capture(["--only", "B0", "B1", "--json"])
+    second_code, second = _capture(["--only", "B0", "B1", "--json"])
     assert first_code == second_code == bench.EXIT_OK
     assert first == second
     document = json.loads(first)
     assert document["exit_code"] == bench.EXIT_OK
     assert document["totals"]["fail"] == 0
-    suite = document["suites"][0]
-    assert suite["suite"] == "B0" and suite["status"] == "pass"
-    assert {check["code"] for check in suite["checks"]} >= {
+    suites = {item["suite"]: item for item in document["suites"]}
+    assert suites["B0"]["status"] == "pass"
+    assert suites["B1"]["status"] == "pass"
+    assert {check["code"] for check in suites["B0"]["checks"]} >= {
         "thresholds-read", "sample-quota", "truth-recompute", "data-ledger",
+    }
+    assert {check["code"] for check in suites["B1"]["checks"]} >= {
+        "sample-same-snapshot-twice", "sample-url-id-stable", "source-untouched",
+        "coverage-matches-manifest",
     }
 
 
 def test_pending_suites_are_declared_in_the_ledger_and_surfaced():
     code, text = _capture([])
     assert code == bench.EXIT_NOT_MET
-    for suite in ("B1", "B2", "B3", "B4", "B5"):
+    for suite in ("B2", "B3", "B4", "B5"):
         assert suite in text
-    assert "数据侧真值已就位" in text or "尚未交付" in text
+    assert "尚未交付" in text
 
 
 def test_probe_detects_every_injected_defect():
-    code, text = _capture(["--probe", "--only", "B0"])
+    code, text = _capture(["--probe", "--only", "B0", "B1"])
     assert code == bench.EXIT_OK, text
-    assert text.count("[PASS]") == len(bench.PROBE_MUTATIONS)
+    expected = len(bench.PROBE_MUTATIONS) + len(bench.B1_PROBE_NAMES)
+    assert text.count("[PASS]") == expected
     assert "0 条未被检出" in text
+
+
+def test_b1_probe_injects_into_the_implementation_not_the_data():
+    """B1 的探活必须打在实现上：清单非空且每一条都能被 B1 的检查项抓到。"""
+    assert len(bench.B1_PROBE_NAMES) >= 3
+    code, text = _capture(["--probe", "--only", "B1"])
+    assert code == bench.EXIT_OK, text
+    for name in bench.B1_PROBE_NAMES:
+        assert "probe-%s" % name in text
 
 
 def test_probe_reports_failure_when_a_mutation_cannot_be_injected(monkeypatch):
@@ -122,12 +138,25 @@ def test_enabled_suite_without_runner_fails():
 
 
 def test_bench_leaves_the_fixture_untouched():
-    """跑基准（含探活）不得改动冻结产物。"""
-    before = {path: path.read_bytes() for path in sorted(FIXTURE_DIR.rglob("*")) if path.is_file()}
-    assert _capture(["--only", "B0"])[0] == bench.EXIT_OK
-    assert _capture(["--probe", "--only", "B0"])[0] == bench.EXIT_OK
-    after = {path: path.read_bytes() for path in sorted(FIXTURE_DIR.rglob("*")) if path.is_file()}
-    assert before == after
+    """跑基准（含 B0/B1 与探活）不得改动冻结产物——**字节与 mtime 都不许动**。
+
+    比字节还不够：`source-touched-by-snapshot` 那条探活改的正是 mtime（内容不变）。
+    如果探活自己不还原 mtime，"跑一次基准就改了 fixtures 的时间戳"会让后续对账
+    失去参照——所以这里连 mtime 一起比。
+    """
+    def snapshot():
+        return {
+            path: (path.read_bytes(), path.stat().st_mtime_ns)
+            for path in sorted(FIXTURE_DIR.rglob("*")) if path.is_file()
+        }
+
+    before = snapshot()
+    assert _capture(["--only", "B0", "B1"])[0] == bench.EXIT_OK
+    assert _capture(["--probe", "--only", "B0", "B1"])[0] == bench.EXIT_OK
+    after = snapshot()
+    assert before.keys() == after.keys(), "基准跑完后 fixtures 的文件集合变了"
+    assert {k: v[0] for k, v in before.items()} == {k: v[0] for k, v in after.items()}, "基准改动了冻结产物的字节"
+    assert {k: v[1] for k, v in before.items()} == {k: v[1] for k, v in after.items()}, "基准改动了冻结产物的 mtime"
 
 
 def test_missing_manifest_is_a_usage_error_not_a_silent_pass(tmp_path):
@@ -178,11 +207,18 @@ def test_only_whitelist_matches_the_ledger_suites():
     assert set(bench.SUITE_RUNNERS) <= declared
 
 
-@pytest.mark.parametrize("suite", ["B1", "B2", "B3", "B4", "B5"])
+@pytest.mark.parametrize("suite", ["B2", "B3", "B4", "B5"])
 def test_pending_suite_cannot_be_probed(suite):
     """未启用套件不能被探活"顺便放行"：它没有实现，探活只对已启用套件有意义。"""
     runner = bench.SUITE_RUNNERS.get(suite)
     assert runner is None, "%s 未启用却已经有实现了：请把它翻成 enabled 并补探活" % suite
+
+
+def test_every_enabled_suite_has_a_runner():
+    """反向：台账说 enabled 的套件必须有实现（否则基准只能报 runner-registered）。"""
+    manifest = bench.load_manifest(FIXTURE_DIR)
+    for suite in bench.enabled_suites(manifest):
+        assert suite in bench.SUITE_RUNNERS, "%s 标了 enabled 却没有实现" % suite
 
 
 def test_every_enabled_suite_is_actually_run_by_ci():

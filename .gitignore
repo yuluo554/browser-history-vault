@@ -36,6 +36,10 @@ release/
 *.bak
 selftest.json
 
+# 默认 `--out-dir`（K20 第 ③条）：中间产物可单步复查，但**不入仓**——
+# 它们是从用户浏览历史派生的数据，和归档库同级敏感。
+out/
+
 # 真实浏览器历史副本与本地档案（绝不提交）
 History
 History-wal

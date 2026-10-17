@@ -193,9 +193,12 @@
         "title": "数据底座与真值一致性（真值可由独立参照实现复算）"
       },
       "B1": {
-        "enabled": false,
-        "not_enabled_reason": "归档模块尚未交付；数据侧真值已在 assumptions/archive_idempotence.json 就位",
-        "title": "归档幂等"
+        "enabled": true,
+        "max_false_positive": 0.0,
+        "min_detection_rate": 1.0,
+        "notes": "样本驱动：同一份快照连跑两次（visits_added 第二次必须为 0）+ 带 -wal 场景；规则驱动：来源顺序重排 / 分批写入 / 中断重跑；源库 mtime 与字节 sha256 必须不变",
+        "required_second_run_added": 0,
+        "title": "归档幂等（只读 + 幂等 + url_id 稳定 + 覆盖区间）"
       },
       "B2": {
         "enabled": false,
@@ -412,7 +415,7 @@
   "generator": {
     "note": "生成器自身的 sha256 进台账：改了生成器就必须重生成并提交，防『改了生成器没重生成数据』的静默漂移",
     "path": "tools/gen_synthetic_history.py",
-    "sha256": "3a3665ab9d9cc3bdf155c6fa224a15106aebe3419d0eb8670ea1c084fad6844f"
+    "sha256": "9350347afa7cffda9d72335323967143d5968da729f7801cfaf328f42cdbe060"
   },
   "invariants": {
     "background_days_before": "背景总体分两层：近期密集段落在锚点前 21..85 日，更早的零星残留落在 160..520 日；两层之间的真空与其余空日合起来构成 coverage.gaps。锚点前 1..13 日留给会话/路径样本（保证样本时间邻域隔离）",
