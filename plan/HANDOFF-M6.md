@@ -43,7 +43,7 @@
 | 基准（底线解释器，全量） | `py -3.8 tools/bench.py` | 退出码 **0** |
 | 基准可证伪探活（六套件） | `py -3.12 tools/bench.py --probe` | **23 条注入缺陷全部被检出**（B0 5 + B1 3 + B2 3 + B3 4 + B4 4 + **B5 4**） |
 | 报告 HTML（六项验收） | `py -3.12 -m pytest tests/test_report_html.py` | **33 项**：零外链（标记 + 结构）/ 私密零出现（含标题回显）/ 敏感打码 / 头三块 + 短区间推导提示 / AST 三条 + 阴阳对照 / 双跑逐字节 / 首启说明 |
-| 用户命令（报告） | `bhvault report --html --at-us 13436683200000000` | 退出码 0；`report.html` **81,361 字节**（单来源 fixtures）/ 83,131 字节（B5 注入伪造行后）；双跑**逐字节一致**；零外链；私密零出现；头三块在位 |
+| 用户命令（报告） | `bhvault report --html --at-us 13436683200000000` | 退出码 0；`report.html` **83,057 字节**（三来源 367 条 fixtures）；双跑**逐字节一致**；零外链（标记与资源入口均 0）；私密零出现；敏感只以掩码出现；头三块在位 |
 | 首启隐私说明 | 同一命令跑两次 | 首次 stderr 打印「只读副本 / 本地生成 / 零上传」；第二次不再打印 |
 | 离线 CLI 冒烟（模块通路） | `py -3.12 tools/smoke_cli.py` | **32 PASS / 0 FAIL / 1 SKIP**（console script 未装） |
 | 离线 CLI 冒烟（两条通路） | `PATH="$PWD/.venv/Scripts:$PATH" ./.venv/Scripts/python tools/smoke_cli.py --require-console-script` | **64 PASS / 0 FAIL / 0 SKIP** |
