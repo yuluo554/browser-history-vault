@@ -147,7 +147,7 @@
 | 本地提交数 | **13**（`git rev-list --count HEAD`，HEAD == tag） |
 | 远端 tag 对象类型 | `tag`（`gh api .../git/ref/tags/v0.1.0` → `object.type = tag`）——annotated 对象真的到了远端，不是被改写成轻量 tag |
 | tag push run | `39096035572`，结论 **success**，四矩阵逐 job success（`py3.8/py3.12 × ubuntu/windows`） |
-| branch push runs | `39094087217`（`aded08e`）/ `39094697242`（`aba1df1`）/ `39095414842`（`1d25b04`），均 success |
+| branch push runs | `39094087217`（`aded08e`）/ `39094697242`（`aba1df1`）/ `39095414842`（`1d25b04`）/ `39097670651`（`14e6ce8`，tag 后追加事实提交），均 success |
 | 仓库可见性 | 先 private 跑 CI（三次推送全绿）→ **切 public**（`gh repo edit --visibility public`）；切换后 `visibility = PUBLIC` |
 
 > **打 tag 期间重打过两次 tag**（尚未推送、未登记任何哈希时）：第一次 tag 落在 `plan/00`
