@@ -20,7 +20,7 @@
 | `__version__` | `0.1.0` | `src/browser_history_vault/__init__.py`（pyproject 以 dynamic 读取，无第二份） |
 | README 状态行 | `状态：已发布（v0.1.0）` | `tests/test_release_gate.py` 的 `TAG_README` 项 |
 | Release 名 | `v0.1.0` | `gh release view v0.1.0 --json tagName` |
-| 本地提交数 | 10（打 tag 前） | `git rev-list --count HEAD` |
+| 本地提交数 | 见 §2（**自指**：计数含"写入本行"的那次提交，写进 tag 树就永不成立） | `git rev-list --count HEAD`（登记在 §2） |
 | 工作树 | 干净 | `git status --porcelain` 为空 |
 
 **四处一致**（tag / `pyproject` 动态版本 / `__version__` / README 状态行）在打 tag 前逐项核对。
