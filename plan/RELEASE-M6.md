@@ -201,8 +201,18 @@ sha256: a736f53d08bed077c2a79f3a476341286ffa14005a6c652b26f62eacb722856d  report
 
 ### 2.4 匿名通道复核
 
-⬜ 未执行（需要不带凭据的独立通道）。**如实标注**：本轮只验了 owner 视角；
-`gh repo view` 报告 `visibility = PUBLIC`，但"匿名能打开"这一关**没有**被独立验证。
+✅ 已执行（**不带任何凭据**的裸 `curl`，本机 git 凭据不参与）：
+
+| 目标 | 结果 |
+|---|---|
+| `https://github.com/yuluo554/browser-history-vault` | **200** |
+| `.../releases/tag/v0.1.0` | **200** |
+| `.../releases/download/v0.1.0/browser-history-vault-0.1.0.tar.gz` | **200**，466,029 字节 |
+| `https://api.github.com/repos/yuluo554/browser-history-vault` | **200** |
+| 匿名下载件的 sha256 | `d69f2688…c4150` —— 与 §2.1 登记值**一致** |
+
+> 这一关的价值：owner 视角看不见"未登录的人拿到的是不是同一份字节"。匿名下载件与登记 sha256
+> 相同，说明公开面交付的就是我们验过的那一份。
 
 ### 2.5 发布终态门禁（在线模式）
 
