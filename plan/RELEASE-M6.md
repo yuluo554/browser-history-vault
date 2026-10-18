@@ -104,7 +104,7 @@
 | branch push run id | `39094087217`（head sha `aded08e`） |
 | 结论 | **success**；四个 job 逐条 success：`py3.8 on windows-latest` / `py3.8 on ubuntu-latest` / `py3.12 on ubuntu-latest` / `py3.12 on windows-latest` |
 | 步骤 | 打包工具链 / 安装 `.[dev]` / 全量测试 / 生成器两层断言 / 基准 `--only B0 B1 B2 B3 B4 B5` / 离线 CLI 冒烟（两条通路） |
-| tag push run | ⬜ tag 后回填（同 sha 两条 run 是合法的，两条都要绿） |
+| tag push run | ✅ `39096035572`（同 sha 两条 run 合法，**两条都绿**） |
 | 首跑失败 | 无（照录：本轮没有失败轮次，也没有"修完才绿"的修复提交） |
 
 > 注解只有一条与代码无关的提示：`actions/checkout@v4` / `setup-python@v5` 的 Node 20 弃用告警。
@@ -138,28 +138,95 @@
 
 > 本节只追加 tag 之后才成立的事实；**不回填、不改写**上一节的原文。
 
+### 2.0 tag 与远端（tag 后事实）
+
+| 项 | 值 |
+|---|---|
+| tag 指向提交 | `1d25b047a694dc98101c146908147cdd9ab48c95`（`v0.1.0^{commit}`） |
+| tag 对象 sha | `e4310938cfcf2b19e964d8a1dff77ae27f5473ec`（`git cat-file -t` = **tag**，annotated） |
+| 本地提交数 | **13**（`git rev-list --count HEAD`，HEAD == tag） |
+| 远端 tag 对象类型 | `tag`（`gh api .../git/ref/tags/v0.1.0` → `object.type = tag`）——annotated 对象真的到了远端，不是被改写成轻量 tag |
+| tag push run | `39096035572`，结论 **success**，四矩阵逐 job success（`py3.8/py3.12 × ubuntu/windows`） |
+| branch push runs | `39094087217`（`aded08e`）/ `39094697242`（`aba1df1`）/ `39095414842`（`1d25b04`），均 success |
+| 仓库可见性 | 先 private 跑 CI（三次推送全绿）→ **切 public**（`gh repo edit --visibility public`）；切换后 `visibility = PUBLIC` |
+
+> **打 tag 期间重打过两次 tag**（尚未推送、未登记任何哈希时）：第一次 tag 落在 `plan/00`
+> 旧行未翻转的提交上、第二次落在"提交计数自指"未规避的提交上——都由 `check_release.py`
+> 当场打红。窗口未开 + 未登记哈希 → 直接 `git tag -d` + 重打，不涉及 force-push 与历史重写。
+> **留档目的**：后来者看到 `releases/tag/v0.1.0` 只会看到一个干净结果；这里记下它经历了什么。
+
 ### 2.1 附件 sha256
 
-（tag 后回填：`sha256: <hex>  <attachment>` 一行一个）
+```
+sha256: d69f268825fb4aef9c015d90041ef2e7e5c355b16399ec06ce54941b937c4150  browser-history-vault-0.1.0.tar.gz
+sha256: a736f53d08bed077c2a79f3a476341286ffa14005a6c652b26f62eacb722856d  report.html
+```
 
-### 2.2 发布物本体复核三步
+`SHA256SUMS` 附件本身是 179 字节，内含上述两行（`sha256sum -c` 可直接校验）。
 
-⬜ 待执行：
-1. `gh release download v0.1.0`（在仓库目录内跑）真下载附件；
-2. `sha256sum -c SHA256SUMS`，并与本档登记值逐位比对；
-3. 附件解包树 vs `git archive v0.1.0` 解包树 `diff -r`（**逐字节同源**的正面证明）。
+### 2.2 发布物本体复核三步（全部已执行）
 
-### 2.3 中立目录逐条走 README
+| 步 | 动作 | 结果 |
+|---|---|---|
+| 1 | `gh release download v0.1.0 --dir <临时目录>` | 三个附件全部下载成功（466,029 / 83,203 / 179 字节） |
+| 2 | `sha256sum -c SHA256SUMS` | `browser-history-vault-0.1.0.tar.gz: OK` / `report.html: OK` |
+| 3 | 下载件 vs 本地构建件 `cmp` | 源码包 **逐字节一致**；`report.html` **逐字节一致** |
+| 4 | 附件解包树 vs `git archive v0.1.0` 解包树 `diff -r` | **无差异**（`DIFF_R_CLEAN`）——附件与 tag 树逐字节同源 |
 
-⬜ 待执行：从**解包树**（不是仓库目录）按 README 快速开始逐条跑，逐条记录退出码。
+### 2.3 中立目录逐条走 README（从**下载件解包树**）
+
+在解包树里 `pip install -e`，然后在**解包目录之外**执行；`HOME` / `USERPROFILE` / `LOCALAPPDATA`
+指向隔离临时目录，避免读到本机真实浏览器历史。
+
+| 命令 | 退出码 |
+|---|---|
+| `bhvault selftest --data-root data` | 0（**7/7 项**，含 `data-ledger` 11 件冻产 + 68 条真值复算） |
+| `bhvault snapshot --browser-dir data/fixtures/synthetic/chrome-running` | 0（WAL 折叠：规范化 325 条） |
+| `bhvault archive`（首次） | 0（写入 325 条） |
+| `bhvault archive`（二跑） | 0（**写入 0 条 / 重复 325**） |
+| `bhvault status` | 0 |
+| `bhvault search 示例文章` | 0（出 `search.csv` + `search.json`） |
+| `bhvault report` | 0 |
+| `bhvault report --html` | 0（出 `report.html` 81,656 字节） |
+| `bhvault cluster` | 0（出 `cluster.json` 155,429 字节） |
+
+> 如实记一条**验证动作自身**的插曲：第一轮我在复制 `config.json` **之前**就跑了
+> `snapshot --config config.json`，得到退出码 2（`config-not-found`）。这是**判据正确**——
+> 显式 `--config` 不回落；修正步骤顺序（先 `cp config.example.json config.json`）后即 0。
+> 它与发布物无关，但按纪律照录，避免后来者以为是缺陷。
 
 ### 2.4 匿名通道复核
 
-⬜ 待执行：不带凭据访问仓库与 Release（owner 视角看不见的一关）。
+⬜ 未执行（需要不带凭据的独立通道）。**如实标注**：本轮只验了 owner 视角；
+`gh repo view` 报告 `visibility = PUBLIC`，但"匿名能打开"这一关**没有**被独立验证。
 
-### 2.5 缺陷处置
+### 2.5 发布终态门禁（在线模式）
 
-（暂无。若发布后发现问题：不重写 tag，走追加提交 + 本节登记，判据是"读者会不会拿到错结论"。）
+```
+py -3.12 tools/check_release.py .
+结论：0 FAIL / 0 WARN / 11 PASS / 0 SKIP
+```
+
+逐项：`TAG_EXISTS` / `TAG_TREE_RELEASE_DOC` / `TAG_README` / `TAG_MILESTONE` / `POST_TAG` /
+`EMAILS` / `TAGGER_EMAIL` / `REMOTE_TAG`（gh api 与本地同源）/ `RELEASE_ASSETS`（3 个附件，536.5 KB）/
+`CLEAN_TREE` / `TRACKED_LEAK` 全部 PASS。
+
+### 2.6 缺陷处置
+
+暂无。发布窗口已关；若后续发现问题，**不重写 tag**，走追加提交 + 本节登记。判据是"读者会不会拿到错结论"。
+
+### 2.7 DoD 终态（tag 后事实；§1.8 的空框保留原样，不在此回填）
+
+| # | 项 | 终态 | 落地证据 |
+|---|---|---|---|
+| 1 | git tag（annotated） | ✅ | `1d25b04`；tag 对象 `e431093`；远端 `object.type = tag` |
+| 2 | GitHub Release **附产物** | ✅ | `gh release view v0.1.0 --json isDraft,assets` → `draft=false`、3 个附件 `uploaded`（536.5 KB） |
+| 3 | 发布留档先于 tag 进 tag 树 | ✅ | tag 树含 `plan/RELEASE-M6.md`（`TAG_TREE_RELEASE_DOC` PASS） |
+| 4 | README 已发布态 | ✅ | `TAG_README` PASS |
+| 5 | 发布终态门禁无 FAIL | ✅ | 在线模式 **0 FAIL / 0 WARN / 11 PASS** |
+
+> **为什么 §1.8 保留空框**：那是 tag 树里的原文，tag 树不可能包含"tag 之后才成立"的打勾。
+> 差异写在这里（追加栏），而不是回头改写上一节——这就是"两栏纪律"的实际形态。
 
 ---
 
