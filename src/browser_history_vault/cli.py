@@ -28,14 +28,17 @@ from .archive import (
     build_status,
     render_status,
 )
+from .cluster import (
+    ClusterError,
+    build_cluster_document,
+    render_cluster,
+)
 from .commands import DELIVERED_COMMANDS, DELIVERED_COMMAND_HELP, all_commands, help_for
 from .config import ConfigError, effective_config_document, json_bytes, load_config
 from .exit_codes import (
     EXIT_DEGRADED,
     EXIT_INPUT_ERROR,
-    EXIT_NOT_READY,
     EXIT_OK,
-    STAGE_NOT_READY,
 )
 from .insight import InsightError, build_report, render_report
 from .normalizer import NormalizeError, normalize_database
@@ -72,7 +75,6 @@ EXIT_CODE_EPILOG = """\
   0  完成
   1  降级完成（跑完了，但有需要人注意的事实：数据缺口 / 检出问题）
   2  输入或用法不可用（缺文件、坏格式、未知命令、参数错误）
-  3  阶段未就绪（该能力尚未在本版本交付；显式拒绝，且不读取配置、不写任何文件）
 
 隐私：只读副本、默认排除私密域名、报告本地生成、零网络请求。
 """
@@ -88,6 +90,7 @@ _INPUT_ERRORS = (
     ArchiveError,
     SearchError,
     InsightError,
+    ClusterError,
     SessionError,
     OSError,
     ValueError,
@@ -115,8 +118,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version="%(prog)s " + __version__)
     subparsers = parser.add_subparsers(dest="command", metavar="<命令>")
 
-    # 已交付命令共用的参数；未就绪命令**不挂** `--config`——挂上却忽略它，
-    # 就是"参数被静默吞掉"，比报用法错误更坏。
+    # 已交付命令共用的参数。
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument(
         "--config",
@@ -125,21 +127,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="显式配置文件路径；给出即只认它，无效则退出码 2（不回落其他来源）",
     )
 
-    for name in STAGE_NOT_READY:
-        subparsers.add_parser(
-            name,
-            help=help_for(name),
-            description="%s\n\n该能力尚未在本版本交付：本版本会以退出码 3 显式拒绝，"
-            "既不读取配置也不写入任何文件。" % help_for(name),
-            formatter_class=argparse.RawDescriptionHelpFormatter,
-        )
-
     builders: Dict[str, "callable"] = {
         "snapshot": _add_snapshot_arguments,
         "archive": _add_archive_arguments,
         "status": _add_status_arguments,
         "search": _add_search_arguments,
         "report": _add_report_arguments,
+        "cluster": _add_cluster_arguments,
         "config": _add_config_arguments,
         "selftest": _add_selftest_arguments,
     }
@@ -309,6 +303,24 @@ def _add_report_arguments(subparsers, common, name) -> None:
     sub.add_argument("--json", action="store_true", help="输出机读 JSON（键排序 / LF / 结尾换行）")
 
 
+def _add_cluster_arguments(subparsers, common, name) -> None:
+    sub = _new_parser(
+        subparsers,
+        name,
+        "主题聚类与研究路径（**数据层**）：纯 Python 轻量 TF-IDF（标题词 + 域名 token），"
+        "不引 embedding / sklearn；会话切分与 `report` 同源。阈值全部取自配置文件且在产物里回显。",
+        common,
+    )
+    _add_archive_db_argument(sub)
+    sub.add_argument(
+        "--out-dir",
+        metavar="DIR",
+        default=DEFAULT_OUT_DIR,
+        help="输出目录（写 cluster.json；默认 %s）" % DEFAULT_OUT_DIR,
+    )
+    sub.add_argument("--json", action="store_true", help="输出机读 JSON（键排序 / LF / 结尾换行）")
+
+
 def _add_config_arguments(subparsers, common, name) -> None:
     _new_parser(
         subparsers,
@@ -361,15 +373,6 @@ def _emit_machine(payload: bytes) -> None:
         buffer.flush()
         return
     sys.stdout.write(payload.decode("utf-8"))  # 测试替身（StringIO）没有 buffer
-
-
-def _refuse_not_ready(command: str) -> int:
-    sys.stderr.write("未交付：%s\n" % help_for(command))
-    sys.stderr.write(
-        "该能力尚未在本版本提供（后续版本计划交付）；"
-        "本命令不读取配置，也不写入任何文件。\n"
-    )
-    return EXIT_NOT_READY
 
 
 def _report_error(exc: BaseException) -> int:
@@ -660,6 +663,52 @@ def _cmd_report(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_cluster(args: argparse.Namespace) -> int:
+    loaded = load_config(args.config)
+    config = loaded.config
+    archive_db = _archive_db_path(args)
+    out_dir = Path(args.out_dir)
+    if not archive_db.is_file():
+        document = {
+            "_kind": "browser-history-vault/topic-cluster",
+            "_deterministic": True,
+            "archive_db": str(archive_db),
+            "exists": False,
+            "counts": {
+                "archive_records": 0,
+                "visible_records": 0,
+                "cluster_count": 0,
+                "path_count": 0,
+            },
+            "topics": {"items": []},
+            "paths": {"path_total": 0, "items": []},
+            "note": _MISSING_ARCHIVE_NOTE,
+        }
+        if args.json:
+            _emit_machine(json_bytes(document))
+        else:
+            sys.stdout.write("== bhvault cluster ==\n%s\n" % _MISSING_ARCHIVE_NOTE)
+        return EXIT_DEGRADED
+
+    rows = _read_archive_rows(archive_db)
+    document = dict(
+        build_cluster_document(
+            rows,
+            config=config,
+            archive_db=str(archive_db),
+            config_path=str(loaded.path),
+        ),
+        exists=True,
+    )
+    write_json(out_dir / "cluster.json", document)
+    if args.json:
+        _emit_machine(json_bytes(document))
+        return EXIT_OK
+    sys.stdout.write(render_cluster(document))
+    sys.stdout.write("结构化结果：%s\n" % (out_dir / "cluster.json"))
+    return EXIT_OK
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     ensure_utf8_stdio()
     parser = build_parser()
@@ -670,8 +719,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         parser.print_help(sys.stderr)
         sys.stderr.write("\n未给出命令（用法错误）。\n")
         return EXIT_INPUT_ERROR
-    if command in STAGE_NOT_READY:
-        return _refuse_not_ready(command)
 
     handlers = {
         "config": _cmd_config,
@@ -681,6 +728,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "status": _cmd_status,
         "search": _cmd_search,
         "report": _cmd_report,
+        "cluster": _cmd_cluster,
     }
     handler = handlers.get(command)
     if handler is None:  # pragma: no cover - 由 build_parser 的构造表自证覆盖
@@ -697,7 +745,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 __all__ = [
     "DEFAULT_OUT_DIR",
     "EXIT_DEGRADED",
-    "EXIT_NOT_READY",
     "EXIT_OK",
     "all_commands",
     "build_parser",

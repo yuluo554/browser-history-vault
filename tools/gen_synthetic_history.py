@@ -179,9 +179,9 @@ BENCH_COUNTEREXAMPLES_REQUIRED_PER_KIND = 1
 #: 未启用套件：必须在 manifest 里**显式声明**，基准把它们当"未启用"而不是"通过"。
 #: 每交付一个模块就把它从本表**移出**并登记进下面的 `ENABLED_SUITES`（**移除即登记**：
 #: 只在一边出现，CI 的 `test_every_enabled_suite_is_actually_run_by_ci` 会盯）。
-#: B1（归档）在 M2 移出；B2（查询确定性）/ B3（洞察口径）在 M3 移出。
+#: B1（归档）在 M2 移出；B2（查询确定性）/ B3（洞察口径）在 M3 移出；
+#: B4（聚类与路径）在 M4 移出。
 PENDING_SUITES: Dict[str, Dict[str, str]] = {
-    "B4": {"title": "聚类与路径", "reason": "聚类模块尚未交付；路径真值已就位"},
     "B5": {"title": "隐私与零外链", "reason": "报告模块尚未交付；隐私真值已就位"},
 }
 
@@ -210,6 +210,14 @@ ENABLED_SUITES: Dict[str, Dict[str, Any]] = {
         "max_false_positive": 0.0,
         "notes": "样本驱动：会话 8 / 遗忘 16 / 热力 8 / 集中度 4 逐条点名；"
                  "规则驱动：间隔 ±1 秒、天数 ±1、空分母与单条、与参照实现逐口径对撞、visit_id 下钻对账",
+    },
+    "B4": {
+        "title": "聚类与路径（主题词族 / 研究路径 / 确定性 / 隐私）",
+        "min_detection_rate": 1.0,
+        "max_false_positive": 0.0,
+        "notes": "样本驱动：主题词族 8（含 2 反例：df < min_df 必须丢弃）/ 路径 5（含 1 反例：跨会话不得串）逐条点名；"
+                 "规则驱动：复跑逐字段一致 / 打乱输入不变 / 同分同序（显式次键）/ 阈值取自配置且可见 / "
+                 "会话口径单点同源 / 路径间隔边界 / visit_id 下钻对账 / 输出面零私密零原主机名",
     },
 }
 

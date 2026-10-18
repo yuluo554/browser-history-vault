@@ -43,7 +43,6 @@ if str(SRC_ROOT) not in sys.path:
     # 冒烟里出现第二份"未就绪命令清单"或第二份纪元换算，就等于把口径又写了一遍。
     sys.path.insert(0, str(SRC_ROOT))
 
-from browser_history_vault.exit_codes import STAGE_NOT_READY  # noqa: E402
 from browser_history_vault.timeutil import local_us_of_datetime  # noqa: E402
 
 
@@ -363,7 +362,60 @@ def smoke_channel(label, base, tmp_dir):
         "rc=%d，覆盖区间%s，遗忘区块%s" % (code, "有" if "覆盖区间" in text else "缺",
                                      "有" if "遗忘的宝藏" in text else "缺"))
 
-    # ---- 档案不存在时：检索与报告都是降级（1），且不写任何产物 ----
+    # ---- cluster：主题聚类（词族真值经 CLI 复现）+ 研究路径 + 落盘 ----
+    code, out, err = run(
+        base + ["cluster", "--config", str(EXAMPLE_CONFIG), "--archive-db", archive_db,
+                "--out-dir", out_dir, "--json"],
+        env_extra=isolated,
+    )
+    ok = code == 0
+    detail = "rc=%d" % code
+    if ok:
+        try:
+            document = json.loads(out.decode("utf-8"))
+            family = [item for item in document["topics"]["items"]
+                      if "示例文章" in item.get("terms", [])]
+            urls = sorted(family[0]["urls"]) if family else []
+            ok = (
+                document["topics"]["thresholds"]["min_df"] == 2
+                and len(family) == 1
+                and len(urls) == 3
+                and all(url.startswith("https://topic-a.example.test/") for url in urls)
+                and document["counts"]["path_count"] > 0
+            )
+            detail = "rc=0，主题簇 %d 个；『示例文章』族 %d 条命中；研究路径 %d 条" % (
+                document["counts"]["cluster_count"], len(urls), document["counts"]["path_count"])
+        except (ValueError, KeyError, TypeError, IndexError) as exc:
+            ok = False
+            detail = "机读输出不符合预期：%s" % exc
+    add(PASS if ok else FAIL, "%s/cluster" % label, detail)
+
+    cluster_json = Path(out_dir) / "cluster.json"
+    ok = cluster_json.is_file()
+    detail = "缺 %s" % cluster_json
+    if ok:
+        try:
+            document = json.loads(cluster_json.read_text(encoding="utf-8"))
+            ok = document["_kind"] == "browser-history-vault/topic-cluster"
+            detail = "结构化结果已落盘（%d 字节）" % cluster_json.stat().st_size
+        except (ValueError, KeyError) as exc:
+            ok = False
+            detail = "落盘结果不可读：%s" % exc
+    add(PASS if ok else FAIL, "%s/cluster-json" % label, detail)
+
+    # 人读形态：生效口径与两个区块必须在输出里可见（K15：阈值可见）
+    code, out, err = run(
+        base + ["cluster", "--config", str(EXAMPLE_CONFIG), "--archive-db", archive_db,
+                "--out-dir", out_dir],
+        env_extra=isolated,
+    )
+    text = out.decode("utf-8", "replace")
+    ok = code == 0 and "生效口径" in text and "主题聚类" in text and "研究路径" in text
+    add(PASS if ok else FAIL, "%s/cluster-text" % label,
+        "rc=%d，生效口径%s，主题区块%s" % (code, "有" if "生效口径" in text else "缺",
+                                     "有" if "主题聚类" in text else "缺"))
+
+    # ---- 档案不存在时：检索 / 报告 / 聚类都是降级（1），且不写任何产物 ----
     missing_db = str(tmp_dir / "definitely-missing.db")
     missing_out = str(tmp_dir / "out-missing")
     code, out, err = run(
@@ -380,16 +432,17 @@ def smoke_channel(label, base, tmp_dir):
     )
     add(PASS if code == 1 else FAIL, "%s/report-no-archive" % label,
         "rc=%d（期望 1）" % code)
+    code, out, err = run(
+        base + ["cluster", "--config", str(EXAMPLE_CONFIG), "--archive-db", missing_db,
+                "--out-dir", missing_out],
+        env_extra=isolated,
+    )
+    add(PASS if code == 1 else FAIL, "%s/cluster-no-archive" % label,
+        "rc=%d（期望 1）" % code)
     if Path(missing_out).exists():
         add(FAIL, "%s/no-archive-writes-nothing" % label, "档案缺失时仍写出了产物目录")
     else:
         add(PASS, "%s/no-archive-writes-nothing" % label, "档案缺失时未写任何文件")
-
-    # ---- 未就绪命令仍然显式拒绝（剩余一条） ----
-    pending = sorted(STAGE_NOT_READY)
-    code, out, err = run(base + [pending[0]], env_extra=isolated)
-    add(PASS if code == 3 else FAIL, "%s/not-ready" % label,
-        "未交付命令 %s rc=%d（期望 3）" % (pending[0], code))
 
     code, out, err = run(base + ["not-a-command"], env_extra=isolated)
     add(PASS if code == 2 else FAIL, "%s/unknown-command" % label, "未知命令 rc=%d（期望 2）" % code)
@@ -398,10 +451,17 @@ def smoke_channel(label, base, tmp_dir):
     ok = code == 2 and "不会回落" in err.decode("utf-8", "replace")
     add(PASS if ok else FAIL, "%s/explicit-config-strict" % label, "无效 --config rc=%d（期望 2 且明写不回落）" % code)
 
-    code, out, err = run(base + [pending[0]], env_extra=dict(isolated, PYTHONIOENCODING="cp1252"))
-    text = err.decode("utf-8", "replace")
-    ok = code == 3 and "UnicodeEncodeError" not in text and "Traceback" not in text
-    add(PASS if ok else FAIL, "%s/cp1252-stdio" % label, "窄编码控制台 rc=%d，无编码崩溃" % code)
+    # 窄编码控制台：用**真实的编码路径**测（`_stdio.ensure_utf8_stdio` + 一条会打印中文的
+    # 已交付命令）。曾经这里跑的是"未就绪命令只打印中文然后退 3"——未就绪语义退役后，
+    # 那条通路不复存在，于是改用 `selftest`（打印大量中文、退出码 0）。
+    code, out, err = run(
+        base + ["selftest", "--config", str(EXAMPLE_CONFIG), "--data-root", str(DATA_ROOT)],
+        env_extra=dict(isolated, PYTHONIOENCODING="cp1252"),
+    )
+    text = out.decode("utf-8", "replace") + err.decode("utf-8", "replace")
+    ok = code == 0 and "PASS" in text and "UnicodeEncodeError" not in text and "Traceback" not in text
+    add(PASS if ok else FAIL, "%s/cp1252-stdio" % label,
+        "窄编码控制台 rc=%d，中文可打印且无编码崩溃" % code)
 
 
 def main(argv=None):

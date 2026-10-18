@@ -485,18 +485,18 @@ def test_manifest_declares_pending_suites_with_reasons(manifest):
     assert suites["B1"]["enabled"] is True, "B1 随归档模块启用（M2）"
     assert suites["B2"]["enabled"] is True, "B2 随检索模块启用（M3）"
     assert suites["B3"]["enabled"] is True, "B3 随洞察模块启用（M3）"
+    assert suites["B4"]["enabled"] is True, "B4 随聚类模块启用（M4）"
     enabled = [name for name, config in suites.items() if config.get("enabled")]
-    assert enabled == ["B0", "B1", "B2", "B3"], "本阶段只应启用 B0–B3，实际启用：%s" % enabled
-    for name in ("B4", "B5"):
-        assert suites[name]["enabled"] is False
-        assert suites[name]["not_enabled_reason"].strip()
+    assert enabled == ["B0", "B1", "B2", "B3", "B4"], "本阶段只应启用 B0–B4，实际启用：%s" % enabled
+    assert suites["B5"]["enabled"] is False
+    assert suites["B5"]["not_enabled_reason"].strip()
     # 门槛随数据下发（改门槛 = 改数据 + 重生成），不是写死在基准代码里
     b1 = suites["B1"]
     assert b1["min_detection_rate"] == 1.0
     assert b1["max_false_positive"] == 0.0
     assert int(b1["required_second_run_added"]) == 0
     assert b1["notes"].strip()
-    for name in ("B2", "B3"):
+    for name in ("B2", "B3", "B4"):
         assert suites[name]["min_detection_rate"] == 1.0, "%s 的检出率门槛必须随数据下发" % name
         assert suites[name]["max_false_positive"] == 0.0, "%s 的误报率门槛必须随数据下发" % name
         assert suites[name]["notes"].strip()

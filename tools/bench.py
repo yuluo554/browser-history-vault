@@ -1422,6 +1422,291 @@ SUITE_RUNNERS["B3"] = run_suite_b3
 
 
 # --------------------------------------------------------------------------
+# 套件 B4：聚类与路径（主题词族 / 研究路径 / 确定性 / 隐私）
+# --------------------------------------------------------------------------
+
+def _b4_samples(fixture_dir: Path, rows, manifest: Dict[str, Any]) -> List[Check]:
+    """样本驱动：主题词族真值 8 条（含 2 反例）+ 路径真值 5 条（含 1 反例）逐条点名。"""
+    from browser_history_vault import cluster
+
+    config = _fixture_config(manifest)
+    visible = _b2_visible(rows, manifest)
+    checks: List[Check] = []
+
+    # 主题词族：真值样本用**词**锚定（不是用实现分配的 cluster_id）
+    result = cluster.cluster_topics(visible, config=config)
+    bundle = _truth_bundle(fixture_dir, "topics")
+    problems: List[str] = []
+    for sample in bundle["samples"]:
+        term = str(sample["input"]["term"])
+        expected = sample["expected"]
+        if expected.get("dropped"):
+            if term.casefold() in result.kept_terms:
+                problems.append("%s：df=%d < min_df 的词却成了分组依据"
+                                % (sample["id"], expected.get("df", 0)))
+            elif term.casefold() not in result.dropped_terms:
+                problems.append("%s：既不在保留词表也不在丢弃词表" % sample["id"])
+            continue
+        found = result.cluster_for_term(term)
+        if found is None:
+            problems.append("%s：词族 %s 没有对应簇" % (sample["id"], term))
+            continue
+        if "member_urls" in expected and sorted(found.urls) != sorted(expected["member_urls"]):
+            problems.append("%s：成员 %d 个（期望 %d 个）"
+                            % (sample["id"], len(found.urls), len(expected["member_urls"])))
+        if "member_domains" in expected and sorted(found.member_domains) != sorted(expected["member_domains"]):
+            problems.append("%s：成员域名 %s" % (sample["id"], list(found.member_domains)))
+        if "grouped_together" in expected and (len(found.member_domains) > 1) != bool(expected["grouped_together"]):
+            problems.append("%s：跨域名归组结论不符" % sample["id"])
+    checks.append(
+        Check(
+            "sample-topics",
+            not problems,
+            "；".join(problems[:3]) if problems
+            else "%d 条主题真值逐条一致（含 %d 条反例：df < min_df 必须被丢弃）"
+            % (len(bundle["samples"]), sum(1 for s in bundle["samples"] if s["counterexample"])),
+        )
+    )
+
+    # 研究路径：真值样本用 url 锚点定位（不是用实现产出的 session_id）
+    paths = cluster.research_paths(visible, config=config)
+    bundle = _truth_bundle(fixture_dir, "paths")
+    problems = []
+    for sample in bundle["samples"]:
+        wanted = set(sample["input"]["urls"])
+        picked = [p for p in paths if wanted & set(p.urls())]
+        got = [list(p.urls()) for p in picked]
+        expected = [list(seq) for seq in sample["expected"]["step_urls"]]
+        if got != expected:
+            problems.append("%s：期望 %s，实得 %s" % (sample["id"], expected, got))
+    checks.append(
+        Check(
+            "sample-paths",
+            not problems and len(paths) == len(_prod_split_visible(visible, manifest)),
+            "；".join(problems[:2]) if problems
+            else "%d 条路径真值逐条一致（含 %d 条反例：跨会话不得串）；全库路径数 %d = 会话数"
+            % (len(bundle["samples"]), sum(1 for s in bundle["samples"] if s["counterexample"]),
+               len(paths)),
+        )
+    )
+    return checks
+
+
+def _prod_split_visible(visible, manifest):
+    from browser_history_vault import insight
+
+    return insight.split_sessions(visible, int(_fixture_config(manifest).session_gap_minutes))
+
+
+def _b4_rules(fixture_dir: Path, rows, manifest: Dict[str, Any]) -> List[Check]:
+    """规则驱动：复跑 / 打乱输入 / 同分同序 / 阈值生效 / 路径边界 / 会话同源 / 下钻 / 隐私。"""
+    import datetime as _datetime
+
+    from browser_history_vault import cluster, insight, privacy, sessions
+    from browser_history_vault.timeutil import US_PER_SECOND, local_us_of_datetime
+
+    config = _fixture_config(manifest)
+    visible = _b2_visible(rows, manifest)
+    checks: List[Check] = []
+    baseline = cluster.build_cluster_document(rows, config=config, archive_db="<bench>")
+    payload = json.dumps(baseline, sort_keys=True, ensure_ascii=False)
+
+    # 1) 复跑一致：同档案 + 同配置两次生成逐字段一致（无时钟字段、无随机序）
+    again = json.dumps(
+        cluster.build_cluster_document(rows, config=config, archive_db="<bench>"),
+        sort_keys=True, ensure_ascii=False,
+    )
+    checks.append(
+        Check(
+            "rule-repeatable",
+            payload == again and bool(baseline["topics"]["items"]) and bool(baseline["paths"]["items"]),
+            "两次生成的机读结果%s（簇 %d / 路径 %d）"
+            % ("逐字段一致" if payload == again else "**不一致**",
+               baseline["counts"]["cluster_count"], baseline["counts"]["path_count"]),
+        )
+    )
+
+    # 2) 打乱输入顺序：结果必须与输入物理序无关（次排序键接受考验）
+    permutations = {
+        "reversed": list(reversed(rows)),
+        "by-url-desc": sorted(rows, key=lambda row: str(row["url"]), reverse=True),
+        "by-time-desc": sorted(rows, key=lambda row: -int(row["visit_time_us"])),
+    }
+    shuffle_problems = [
+        name for name, source in permutations.items()
+        if json.dumps(cluster.build_cluster_document(source, config=config, archive_db="<bench>"),
+                      sort_keys=True, ensure_ascii=False) != payload
+    ]
+    checks.append(
+        Check(
+            "rule-shuffled-input",
+            not shuffle_problems,
+            "输入按 %s 重排后结果%s"
+            % ("、".join(permutations), "完全一致" if not shuffle_problems
+               else "**发生变化**：%s" % shuffle_problems),
+        )
+    )
+
+    # 3) 同分同序：构造分值完全并列的词族，断言次序由**显式次排序键**（词面升序）决定
+    base_us = local_us_of_datetime(_datetime.datetime(2026, 6, 1, 10, 0, 0),
+                                  int(config.timezone_utc_offset_minutes))
+
+    def row(url: str, title: str, us: int, visit_id: int, host: str) -> Dict[str, Any]:
+        return {
+            "visit_id": visit_id, "url_id": visit_id, "url": url, "title": title, "host": host,
+            "visit_time_us": us, "source_browser": "chrome", "source_profile": "Default",
+            "transition": 0, "visit_duration_us": 0,
+        }
+
+    # 两个词（zulu-* 与 alpha-*）各出现在 2 个 URL 上 → df 相同 → 权重相同 → 必须按词面升序
+    tie_rows = [
+        row("https://tie.example.test/z1", "zulu", base_us, 1, "tie.example.test"),
+        row("https://tie.example.test/z2", "zulu", base_us + 1, 2, "tie.example.test"),
+        row("https://tie.example.test/a1", "alpha", base_us + 2, 3, "tie.example.test"),
+        row("https://tie.example.test/a2", "alpha", base_us + 3, 4, "tie.example.test"),
+    ]
+    def tie_doc(source):
+        return cluster.build_cluster_document(source, config=config, archive_db="<bench>")
+    tie_terms = [
+        item["terms"][0] for item in tie_doc(tie_rows)["topics"]["items"]
+        if item["terms"] and item["terms"][0] in ("alpha", "zulu")
+    ]
+    tie_shuffled_terms = [
+        item["terms"][0] for item in tie_doc(list(reversed(tie_rows)))["topics"]["items"]
+        if item["terms"] and item["terms"][0] in ("alpha", "zulu")
+    ]
+    checks.append(
+        Check(
+            "rule-tie-ordering",
+            tie_terms == ["alpha", "zulu"] and tie_shuffled_terms == tie_terms,
+            "同权重词族次序 %s（期望 ['alpha', 'zulu']，即词面升序）；打乱输入后 %s"
+            % (tie_terms, "不变" if tie_shuffled_terms == tie_terms else "变化（次排序键缺失）"),
+        )
+    )
+
+    # 4) 阈值在产物里可见 + 改 min_df 后结果按定义变化（阈值不是写死在代码里的）
+    thresholds = baseline["topics"]["thresholds"]
+    from browser_history_vault.config import parse_config
+
+    raw = json.loads((REPO_ROOT / "config.example.json").read_text(encoding="utf-8"))
+    raw["cluster"]["min_df"] = int(thresholds["min_df"]) + 1
+    strict = cluster.build_cluster_document(rows, config=parse_config(raw, "<bench>"),
+                                            archive_db="<bench>")
+    thr_ok = (
+        thresholds["min_df"] == int(config.cluster_min_df)
+        and thresholds["max_features"] == int(config.cluster_max_features)
+        and thresholds["top_terms"] == int(config.cluster_top_terms)
+        and abs(float(thresholds["similarity_threshold"]) - float(config.cluster_similarity_threshold)) < 1e-12
+        and strict["topics"]["thresholds"]["min_df"] == int(thresholds["min_df"]) + 1
+        and strict["topics"]["kept_terms"] < baseline["topics"]["kept_terms"]
+    )
+    checks.append(
+        Check(
+            "rule-thresholds-from-config",
+            thr_ok,
+            "产物回显 min_df=%d / max_features=%d / top_terms=%d / similarity=%s；"
+            "min_df 抬到 %d 后保留词 %d → %d（阈值真的在起作用）"
+            % (thresholds["min_df"], thresholds["max_features"], thresholds["top_terms"],
+               thresholds["similarity_threshold"], int(thresholds["min_df"]) + 1,
+               baseline["topics"]["kept_terms"], strict["topics"]["kept_terms"]),
+        )
+    )
+
+    # 5) 路径与会话同源：结构断言（生产定义点只有一处）+ 路径步骤与会话步骤逐项一致
+    same_object = cluster.split_sessions is sessions.split_sessions is insight.split_sessions
+    prod_paths = cluster.research_paths(visible, config=config)
+    prod_sessions = _prod_split_visible(visible, manifest)
+    coherent = [list(p.urls()) for p in prod_paths] == [list(s.urls()) for s in prod_sessions]
+    checks.append(
+        Check(
+            "rule-session-single-source",
+            same_object and coherent and len(prod_paths) == len(prod_sessions),
+            "`cluster.split_sessions is sessions.split_sessions is insight.split_sessions` = %s；"
+            "路径序列与会话序列%s（%d 条）"
+            % (same_object, "逐项一致" if coherent else "**不一致**", len(prod_paths)),
+        )
+    )
+
+    # 6) 路径边界：恰好等于间隔 → 同一路径；多 1 秒 → 拆开（与会话口径同源）
+    limit = int(config.session_gap_minutes) * 60
+    measured = {}
+    for name, seconds in (("exact", limit), ("plus", limit + 1)):
+        probe = [
+            row("https://rule-path.example.test/start", "rule", base_us, 1, "rule-path.example.test"),
+            row("https://rule-path.example.test/next", "rule", base_us + seconds * US_PER_SECOND, 2,
+                "rule-path.example.test"),
+        ]
+        measured[name] = cluster.research_paths(probe, config=config)
+    checks.append(
+        Check(
+            "rule-path-gap-boundary",
+            len(measured["exact"]) == 1 and len(measured["exact"][0].steps) == 2
+            and len(measured["plus"]) == 2,
+            "间隔 恰好/%d 秒后 → 路径 %d/%d 条（期望 1/2：恰好等于不切分）"
+            % (limit + 1, len(measured["exact"]), len(measured["plus"])),
+        )
+    )
+
+    # 7) 下钻：每个聚合数字的 visit_id 都能在库里解析到行，且计数对得上
+    by_id = {int(row["visit_id"]): row for row in rows}
+    problems = []
+    for item in baseline["topics"]["items"]:
+        resolved = [by_id.get(vid) for vid in item["visit_ids"]]
+        if any(entry is None for entry in resolved) or len(resolved) != item["visits"]:
+            problems.append("topics:#%d" % item["cluster_id"])
+    for item in baseline["paths"]["items"]:
+        if len(item["steps"]) != item["length"]:
+            problems.append("paths:#%d" % item["session_id"])
+        for step in item["steps"]:
+            if step["visit_id"] not in by_id:
+                problems.append("paths:#%d:step" % item["session_id"])
+    checks.append(
+        Check(
+            "rule-drilldown-resolvable",
+            not problems,
+            "；".join(problems[:3]) if problems
+            else "主题簇与路径步骤的 visit_id 全部可解析，簇的 visit 行数逐项对账",
+        )
+    )
+
+    # 8) 输出面零私密、敏感打码（判据 = **主机身份**，不是子串）
+    private_hosts = sorted({str(row["host"]) for row in rows if _kind_of(str(row["host"]), config) == "private"})
+    sensitive_hosts = sorted({str(row["host"]) for row in rows if _kind_of(str(row["host"]), config) == "sensitive"})
+    # 词表会把主机名 token 化 → 把清单项本身也纳入监视面（与私密主机同形的词不得出现）
+    watched = sorted(set(private_hosts + sensitive_hosts) | set(config.private_domains) | set(config.sensitive_domains))
+    leaks = _leaked_hosts(payload, watched)
+    checks.append(
+        Check(
+            "rule-cluster-privacy",
+            not leaks and bool(private_hosts) and bool(sensitive_hosts),
+            "聚类产物文本中以**主机身份**出现的私密/敏感主机 %d 个%s（监视面 %d 个）"
+            % (len(leaks), "" if not leaks else "：%s" % leaks[:3], len(watched)),
+        )
+    )
+    return checks
+
+
+def run_suite_b4(fixture_dir: Path, manifest: Dict[str, Any]) -> List[Check]:
+    """聚类与路径：样本驱动（主题 8 / 路径 5）+ 规则驱动（复跑/打乱/同分/阈值/同源/边界/下钻/隐私）。"""
+    checks: List[Check] = []
+    try:
+        with tempfile.TemporaryDirectory(prefix="bhvault-bench-b4-") as tmp:
+            archive_db = _build_fixture_archive(fixture_dir, manifest, Path(tmp) / "archive.db")
+            rows = _fixture_rows(archive_db)
+            checks.extend(_guard("samples", lambda: _b4_samples(fixture_dir, rows, manifest)))
+            checks.extend(_guard("rules", lambda: _b4_rules(fixture_dir, rows, manifest)))
+    except Exception as exc:  # noqa: BLE001
+        checks.append(Check("b4-error", False, "B4 未能跑完：%s" % exc))
+        return checks
+    finally:
+        _cleanup_bench_snapshots()
+    return checks
+
+
+SUITE_RUNNERS["B4"] = run_suite_b4
+
+
+# --------------------------------------------------------------------------
 # 编排
 # --------------------------------------------------------------------------
 
@@ -1686,6 +1971,22 @@ B3_PROBE_NAMES: Tuple[str, ...] = (
     "report-privacy-gate-bypassed",
 )
 
+#: B4 的探活缺陷（同上，四条各打一条口径）。**每一条都打在 `cluster` 的消费处**
+#: （基准走 `cluster.build_cluster_document` / `cluster.cluster_topics`，而不是定义模块）。
+#:
+#: | 注入 | 对应真实缺陷 |
+#: |---|---|
+#: | 同分排序丢次键 | 词族只按权重排、没有词面次键 → 打乱输入即换簇序与 cluster_id |
+#: | 路径跨会话串起来 | 路径不按会话切分 → 跨会话反例（5 分钟→30 分钟后）被串成一条 |
+#: | 阈值写死在代码里 | `min_df` 不读配置 → 改配置产物不变（"阈值可见"变成摆设） |
+#: | 绕过隐私门禁 | `keep_visible` 被短路 → 私密主机名以词表 token 进产物 |
+B4_PROBE_NAMES: Tuple[str, ...] = (
+    "cluster-tie-break-missing",
+    "cluster-paths-cross-session",
+    "cluster-thresholds-hardcoded",
+    "cluster-privacy-gate-bypassed",
+)
+
 
 def _b2_probe_mutation(name: str) -> Tuple[str, Callable[[], None], Callable[[], None]]:
     from browser_history_vault import privacy as privacy_module
@@ -1831,6 +2132,99 @@ def _b3_probe_mutation(name: str) -> Tuple[str, Callable[[], None], Callable[[],
     raise BenchError("未登记的 B3 探活项：%s" % name)
 
 
+def _b4_probe_mutation(name: str) -> Tuple[str, Callable[[], None], Callable[[], None]]:
+    from browser_history_vault import cluster as cluster_module
+    from browser_history_vault import privacy as privacy_module
+
+    if name == "cluster-tie-break-missing":
+        original = cluster_module.term_rank_key
+
+        def inject() -> None:
+            def weight_only(term, df, document_count):
+                # 缺陷形态：只按权重排，丢掉"同权重按词面升序"这条**显式次排序键**。
+                # 于是同 df 的词靠输入物理序排——打乱输入即换簇序（rule-tie-ordering 变红）。
+                return (-cluster_module.term_weight(term, df, document_count),)
+
+            cluster_module.term_rank_key = weight_only  # type: ignore[assignment]
+
+        def restore() -> None:
+            cluster_module.term_rank_key = original  # type: ignore[assignment]
+
+        return "同权重排序丢掉词面次键（打乱输入即换簇序）", inject, restore
+
+    if name == "cluster-paths-cross-session":
+        original = cluster_module.split_sessions
+
+        def inject() -> None:
+            def one_session(rows, gap_minutes):
+                # 缺陷形态：把整库当成一个会话（路径不按会话切分）→ 跨会话反例被串成一条
+                from browser_history_vault.sessions import Session, SessionStep
+
+                steps = []
+                grouped = {}
+                for row in rows:
+                    grouped.setdefault((str(row["source_browser"]), str(row["source_profile"])), []).append(row)
+                collected = []
+                for source_key in sorted(grouped):
+                    ordered = sorted(grouped[source_key], key=lambda item: (int(item["visit_time_us"]), str(item["url"])))
+                    collected.append(
+                        (
+                            source_key,
+                            tuple(
+                                SessionStep(
+                                    visit_id=int(item["visit_id"]), url=str(item["url"]),
+                                    visit_time_us=int(item["visit_time_us"]),
+                                    source_browser=str(item["source_browser"]),
+                                    source_profile=str(item["source_profile"]),
+                                )
+                                for item in ordered
+                            ),
+                        )
+                    )
+                collected.sort(key=lambda item: (item[1][0].visit_time_us, item[0][0], item[0][1]))
+                return tuple(
+                    Session(session_id=index, source_browser=key[0], source_profile=key[1], steps=steps)
+                    for index, (key, steps) in enumerate(collected, 1)
+                )
+
+            cluster_module.split_sessions = one_session  # type: ignore[assignment]
+
+        def restore() -> None:
+            cluster_module.split_sessions = original  # type: ignore[assignment]
+
+        return "路径不按会话切分（跨会话串成一条）", inject, restore
+
+    if name == "cluster-thresholds-hardcoded":
+        original = cluster_module.thresholds_of
+
+        def inject() -> None:
+            def hardcoded(config):
+                # 缺陷形态：min_df 写死在代码里（不读配置）→ 改配置产物不变
+                values = dict(original(config))
+                values["min_df"] = 2
+                return values
+
+            cluster_module.thresholds_of = hardcoded  # type: ignore[assignment]
+
+        def restore() -> None:
+            cluster_module.thresholds_of = original  # type: ignore[assignment]
+
+        return "阈值写死在代码里（min_df 不读配置）", inject, restore
+
+    if name == "cluster-privacy-gate-bypassed":
+        original = cluster_module.keep_visible_rows
+
+        def inject() -> None:
+            cluster_module.keep_visible_rows = lambda rows, **kwargs: list(rows)  # type: ignore[assignment]
+
+        def restore() -> None:
+            cluster_module.keep_visible_rows = original  # type: ignore[assignment]
+
+        return "聚类绕过隐私门禁（私密记录进了聚合）", inject, restore
+
+    raise BenchError("未登记的 B4 探活项：%s" % name)
+
+
 def _run_probe_impl(
     names: Sequence[str],
     mutate: Callable[[str], Tuple[str, Callable[[], None], Callable[[], None]]],
@@ -1909,6 +2303,8 @@ def run_probe(suite_ids: Sequence[str], fixture_dir: Path, manifest: Dict[str, A
         checks.extend(_run_probe_impl(B2_PROBE_NAMES, _b2_probe_mutation, run_suite_b2, fixture_dir, manifest))
     if "B3" in suite_ids:
         checks.extend(_run_probe_impl(B3_PROBE_NAMES, _b3_probe_mutation, run_suite_b3, fixture_dir, manifest))
+    if "B4" in suite_ids:
+        checks.extend(_run_probe_impl(B4_PROBE_NAMES, _b4_probe_mutation, run_suite_b4, fixture_dir, manifest))
     return checks
 
 

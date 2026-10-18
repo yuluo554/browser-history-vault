@@ -1,6 +1,6 @@
 # browser-history-vault（浏览器历史本地知识库）
 
-**状态：开发中（归档 + 检索 + 行为洞察数据层已可用）** —— 题面与计划见 [plan/00-README总览.md](plan/00-README总览.md)。本版本已交付**只读快照 + 增量归档 + 档案状态**、**归档检索（含 CSV 导出）**、**行为洞察数据层**（频次榜 / 域名集中度 / 时段热力 / 会话 / 遗忘的宝藏）、**自检命令**与**可复跑的合成数据底座**（合成 History 库 + 植入真值 + 基准 B0–B3）；单文件 HTML 报告与主题聚类按里程碑逐个落地。
+**状态：开发中（归档 + 检索 + 洞察数据层 + 主题聚类已可用）** —— 题面与计划见 [plan/00-README总览.md](plan/00-README总览.md)。本版本已交付**只读快照 + 增量归档 + 档案状态**、**归档检索（含 CSV 导出）**、**行为洞察数据层**（频次榜 / 域名集中度 / 时段热力 / 会话 / 遗忘的宝藏）、**主题聚类与研究路径**、**自检命令**与**可复跑的合成数据底座**（合成 History 库 + 植入真值 + 基准 B0–B4）；单文件 HTML 报告按里程碑逐个落地。
 
 浏览器只替你留 **90 天**历史，然后静默删除。本工具做「**先归档、再分析**」：首次运行把本地 `History` 的**只读快照**沉淀成自己的长期档案，之后回答「我过去在做什么」「哪些是遗忘的宝藏」「我的作息与兴趣怎么变」。
 
@@ -39,6 +39,7 @@ bhvault status                                  # 覆盖区间与缺口
 # 7) 在档案库上检索与洞察（纯本地；私密域名默认排除）
 bhvault search "关键词" --out-dir out/           # 出 out/search.csv（列序固定）与 out/search.json
 bhvault report --out-dir out/                    # 出 out/report.json 与人读文本
+bhvault cluster --out-dir out/                   # 出 out/cluster.json：主题聚类 + 研究路径
 ```
 
 `python -m browser_history_vault ...` 与 `bhvault ...` 是**行为等价的两条通路**（前者不依赖安装，后者验证安装面）。
@@ -54,9 +55,9 @@ bhvault report --out-dir out/                    # 出 out/report.json 与人读
 | `bhvault selftest` | 数据底座与指令面自检（逐项可证伪） | ✅ 已交付 |
 | `bhvault search` | 归档检索（标题 / URL 的字 n-gram、域名、时间范围；CSV 导出） | ✅ 已交付 |
 | `bhvault report` | 行为洞察**数据层**（频次榜 / 域名集中度 / 时段热力 / 会话 / 遗忘的宝藏） | ✅ 已交付（单文件 HTML 报告在后续版本） |
-| `bhvault cluster` | 主题聚类与研究路径 | ⬜ 未交付（退出码 3） |
+| `bhvault cluster` | 主题聚类与研究路径（纯 Python TF-IDF；复用会话口径） | ✅ 已交付 |
 
-未交付的命令会**显式拒绝**（不伪造空结果、不读配置、不写任何文件），并在后续版本逐个转正。
+本版本**没有未交付的命令**：五个功能模块与 `config` / `selftest` 全部可用。
 
 ### 检索与洞察怎么用
 
@@ -80,6 +81,27 @@ bhvault report --at-us 13436683200000000            # 显式给出"现在"（便
   "形似而非"的公开主机不会被误伤。
 - `report` 里的每个聚合数字都带 `visit_id` 引用，可在档案库里逐条解析（数字可下钻）；
   实际生效的口径（N 的取值、会话间隔、时区、起算日）都会回显在报告里。
+
+### 主题聚类与研究路径怎么用
+
+```bash
+bhvault cluster --out-dir out/            # 出 out/cluster.json + 人读文本
+bhvault cluster --json                    # 机读载荷（键排序 / LF / 结尾换行）
+```
+
+- **算法是纯 Python 轻量 TF-IDF**（标题词 + 域名 token），不引 embedding 模型、不引
+  scikit-learn、不引分词库——`df ≥ cluster.min_df` 的词才可成为分组依据，孤立词会被丢弃。
+- **分组依据是词族，不是域名**：同一词族出现在多个域名上时仍归同一簇；域名 token 取
+  **站点名（主机最左段）+ 完整主机**，不用 `example` / `test` 这类注册后缀标签
+  （否则"最普遍的词"会把整库并成一个桶，"主题"就退化成"一个桶"）。
+- **确定性**：固定种子 + 显式排序键（权重降序、**同权重按词面升序**、簇按访问数降序），
+  不引随机初始化——同一档案 + 同一配置跑两次逐字段一致，**打乱输入顺序结果不变**。
+- **阈值可见**：`min_df` / `max_features` / `top_terms` / `similarity_threshold` 全部取自
+  配置文件并在产物里回显实际取值；改 `min_df` 后词表与簇按定义变化。
+- **研究路径 = 同会话内连续跳转序列**：会话切分与 `report` **共用同一份实现**
+  （恰好等于间隔不切分）；步骤按访问时间升序、同刻按 URL 升序，每一步都带 `visit_id` 可下钻。
+- 聚类输出同样过隐私门禁：私密主机零出现；**与私密/敏感主机同形的词不进词表**
+  （只给一个计数），避免"词表把一个私密主机名印出来"。
 
 ### 归档怎么用（三步）
 
@@ -107,9 +129,9 @@ bhvault status --archive-db ~/.browser-history-vault/archive.db
 | `0` | 完成 |
 | `1` | 降级完成（跑完了，但有需要人注意的事实：档案还不存在 / 归档检出源库被改动） |
 | `2` | 输入或用法不可用（缺文件、坏格式、未知命令、参数错误） |
-| `3` | 阶段未就绪（该能力尚未在本版本交付；显式拒绝，不写任何文件） |
 
 退出码在代码里只有一处定义（`src/browser_history_vault/exit_codes.py`），文档与帮助只引用不复述数字。
+（此前还有一个"阶段未就绪（3）"——能力尚未交付时的显式拒绝。本版本所有命令都已交付，该语义已整项退役。）
 
 ## 条件与纪律
 
@@ -147,8 +169,8 @@ bhvault status --archive-db ~/.browser-history-vault/archive.db
 
 ```bash
 py -3.12 tools/gen_synthetic_history.py --check      # 两层断言：冻结产物形态 + 重生成逐字节一致
-py -3.12 tools/bench.py --only B0 B1 B2 B3           # 基准：真值复算 / 归档幂等 / 查询确定性 / 洞察口径
-py -3.12 tools/bench.py --probe --only B0 B1 B2 B3   # 可证伪探活：注入缺陷 → 必须报未达标（15 条）
+py -3.12 tools/bench.py --only B0 B1 B2 B3 B4           # 基准：真值复算 / 归档幂等 / 查询确定性 / 洞察口径 / 聚类与路径
+py -3.12 tools/bench.py --probe --only B0 B1 B2 B3 B4   # 可证伪探活：注入缺陷 → 必须报未达标（19 条）
 ```
 
 ## 局限与已知问题
@@ -165,7 +187,7 @@ py -3.12 tools/bench.py --probe --only B0 B1 B2 B3   # 可证伪探活：注入�
 ```bash
 python -m pytest -q                                  # 全量测试
 py -3.12 tools/gen_synthetic_history.py --check       # 合成数据两层断言（形态 + 重生成逐字节）
-py -3.12 tools/bench.py --only B0 B1 B2 B3            # 基准（B4/B5 待各自模块落地后启用）
+py -3.12 tools/bench.py --only B0 B1 B2 B3 B4         # 基准（B5 待报告模块落地后启用）
 py -3.12 tools/smoke_cli.py --require-console-script  # 离线 CLI 冒烟（两条通路 × 已交付命令）
 py -3.12 tools/check_release.py . --no-gh             # 发布终态门禁（发布前本来就该红）
 ```

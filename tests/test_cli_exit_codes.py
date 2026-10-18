@@ -1,27 +1,24 @@
-"""退出码契约与"阶段未就绪"拦截（锁进测试，后续重构不漂移）。
+"""退出码契约与"阶段未就绪"退役（锁进测试，后续重构不漂移）。
 
-**M2/M3 的退役在这一组里留下两组断言**（`plan/03` §11 的"五处同步"之测试面）：
+**M4 是退役的最后一棒**：`cluster` 交付后，`EXIT_NOT_READY` 常量与 `STAGE_NOT_READY`
+登记表**整项删除**（不留恒不触发的死码）。因此这一组测试的形态在 M4 发生了变化：
 
-1. **防复活负断言**：已交付命令**不得**重新出现在 `STAGE_NOT_READY` 里——否则
-   "退役"会退化成"加了一条没人记得删的条目"，用户敲命令又变回退出码 3；
-2. **接线正断言**：退役后每条命令都真的能被解析、能跑 `--help`、且**不再**返回 3。
+- 前三棒（M2/M3/M4）各留一条**防复活**负断言：已交付命令不得回到未就绪登记表；
+- M4 起再加一条**整项退役**断言：`exit_codes` 里**不存在** `STAGE_NOT_READY` /
+  `EXIT_NOT_READY`（否则"全部退役"只是"删了条目但常量还在"）；
+- 退出码契约从"四码"收敛为"三码"（0/1/2），帮助里的第 3 行随之删除。
 
-M3 退役的是 `search` / `report`（洞察模块交付）：断言形态与 M2 完全一致
-（负断言 + 正断言 + "不再返回 3"的行为证据），只是换了命令组——
-**旧退出码断言在同一次提交里退役**（K22）。
+**旧退出码断言在同一次提交里退役**（K22）：原先靠"未就绪命令只打印中文然后退 3"
+来测窄编码通路的用例改走**真实的编码路径**（见 `tests/test_encoding_guard.py`）。
 """
 
 from __future__ import annotations
 
 import pytest
 
+from browser_history_vault import exit_codes
 from browser_history_vault.commands import DELIVERED_COMMANDS, all_commands
-from browser_history_vault.exit_codes import (
-    EXIT_INPUT_ERROR,
-    EXIT_NOT_READY,
-    EXIT_OK,
-    STAGE_NOT_READY,
-)
+from browser_history_vault.exit_codes import EXIT_INPUT_ERROR, EXIT_OK
 from helpers import DATA_ROOT, EXAMPLE_CONFIG, run_module, stderr_text, stdout_text
 
 #: M2 交付的三条命令（退役登记的"防复活"对象）。
@@ -29,6 +26,9 @@ M2_DELIVERED = ("snapshot", "archive", "status")
 
 #: M3 交付的两条命令（检索 + 行为洞察的数据层）。
 M3_DELIVERED = ("search", "report")
+
+#: M4 交付的最后一条（主题聚类与研究路径）——本棒退役后未就绪登记表整项清空。
+M4_DELIVERED = ("cluster",)
 
 
 def _isolated_home(tmp_path) -> dict:
@@ -65,13 +65,26 @@ def test_version_exits_zero():
 
 
 def test_help_lists_exit_code_contract():
+    """退出码契约要写给用户看：**0/1/2 三码**都在帮助里出现。
+
+    M4 起"阶段未就绪（3）"整项退役，帮助里的那一行也随之删除——否则帮助会继续
+    承诺一个永远不会发生的退出码（比没有还坏：用户会去找"什么时候会返回 3"）。
+    """
     result = run_module(["--help"])
     assert result.returncode == EXIT_OK
     text = stdout_text(result)
     assert "退出码" in text
-    # 契约要写给用户看：四个码都在帮助里出现
-    for code in ("0", "1", "2", "3"):
+    for code in ("0", "1", "2"):
         assert code in text
+    assert "阶段未就绪" not in text, "未就绪语义已退役，帮助里不得再出现它"
+    assert "未交付" not in text
+
+
+def test_help_covers_every_delivered_command():
+    """已交付命令的码覆盖：每条命令都在帮助里列出（防"命令存在但帮助里看不到"）。"""
+    text = stdout_text(run_module(["--help"]))
+    for name in DELIVERED_COMMANDS:
+        assert name in text, "%s 没出现在 --help 里" % name
 
 
 def test_config_command_exits_zero_and_prints_effective_values():
@@ -90,105 +103,80 @@ def test_config_output_is_byte_identical_across_runs():
 
 
 # --------------------------------------------------------------------------
-# 退役：防复活（负断言） + 接线（正断言）
+# 退役：防复活（负断言） + 接线（正断言） + 整项退役
 # --------------------------------------------------------------------------
 
-@pytest.mark.parametrize("command", M2_DELIVERED)
-def test_m2_commands_are_no_longer_stage_not_ready(command):
-    """防复活：退役的条目不得回到 `STAGE_NOT_READY`。
-
-    只测"命令能跑"是不够的——把条目加回去、同时保留接线，命令照样能跑，
-    但 `--help` 的分组与退出码文案会重新把已交付能力说成"未交付"。
-    """
-    assert command not in STAGE_NOT_READY, (
-        "%s 已在 M2 交付，不得回到未就绪登记表（退役流程见 plan/03 §11）" % command
-    )
-
-
-@pytest.mark.parametrize("command", M2_DELIVERED)
-def test_m2_commands_are_registered_as_delivered(command):
-    """正断言：退役后必须在已交付表里（两表互斥且并集 = 全部命令）。"""
-    assert command in DELIVERED_COMMANDS
-    assert command not in STAGE_NOT_READY
-
-
-@pytest.mark.parametrize("command", M3_DELIVERED)
-def test_m3_commands_are_no_longer_stage_not_ready(command):
-    """防复活：M3 退役的条目不得回到 `STAGE_NOT_READY`（照 M2 的判据抄）。"""
-    assert command not in STAGE_NOT_READY, (
-        "%s 已在 M3 交付，不得回到未就绪登记表（退役流程见 plan/03 §11）" % command
-    )
-
-
-@pytest.mark.parametrize("command", M3_DELIVERED)
-def test_m3_commands_are_registered_as_delivered(command):
+@pytest.mark.parametrize("command", M2_DELIVERED + M3_DELIVERED + M4_DELIVERED)
+def test_delivered_commands_are_registered(command):
     """正断言：退役后必须在已交付表里。"""
     assert command in DELIVERED_COMMANDS
-    assert command not in STAGE_NOT_READY
 
 
-@pytest.mark.parametrize("command", M3_DELIVERED)
-def test_m3_commands_do_not_exit_three(command, tmp_path):
-    """退役的行为证据：`search` / `report` 不再返回 3。
+def test_not_ready_registry_is_retired_entirely():
+    """**整项退役**：M4 后 `exit_codes` 里不得再留未就绪常量/登记表。
 
-    在**没有配置、没有归档库**的隔离环境里跑：两条都应报降级（1，"还没有档案"是用户
-    旅程的正常起点），且**不写任何文件**。关键是**不得**是 3——那是"未交付"的语义。
+    留着恒不触发的 `EXIT_NOT_READY` 会给后来者"这里还有未就绪语义"的假线索
+    （`plan/03` §11 的收尾要求）。
     """
-    out_dir = tmp_path / "out"
-    result = run_module(
-        [command, "--config", str(EXAMPLE_CONFIG), "--archive-db", str(tmp_path / "none.db"),
-         "--out-dir", str(out_dir)],
-        cwd=tmp_path,
-        env_extra=_isolated_home(tmp_path),
-    )
-    assert result.returncode == 1, (
-        "%s 应当报降级（1：档案还不存在），实际 %d" % (command, result.returncode)
-    )
-    assert not out_dir.exists(), "%s 在档案缺失时不得写出任何产物" % command
+    assert not hasattr(exit_codes, "STAGE_NOT_READY"), "未就绪登记表未删干净"
+    assert not hasattr(exit_codes, "EXIT_NOT_READY"), "未就绪退出码常量未删干净"
+    assert not hasattr(exit_codes, "_refuse_not_ready")
 
 
-def test_delivered_and_pending_tables_are_disjoint_and_complete():
-    """两张表必须互斥、无重复，并集 = `all_commands()`（防"两边都登记"或"两边都没有"）。"""
-    overlap = set(DELIVERED_COMMANDS) & set(STAGE_NOT_READY)
-    assert overlap == set(), "命令同时出现在已交付与未就绪表里：%s" % sorted(overlap)
+def test_all_commands_is_exactly_the_delivered_table():
+    """两张表并集/互斥的旧断言退役：M4 后只有一张表。"""
+    assert all_commands() == DELIVERED_COMMANDS
     assert len(set(DELIVERED_COMMANDS)) == len(DELIVERED_COMMANDS), "已交付表有重复项"
-    assert set(all_commands()) == set(DELIVERED_COMMANDS) | set(STAGE_NOT_READY)
 
 
-@pytest.mark.parametrize("command", M2_DELIVERED)
-def test_m2_commands_do_not_exit_three(command, tmp_path):
-    """退役的行为证据：这三条命令不再返回退出码 3。
+@pytest.mark.parametrize("command", M2_DELIVERED + M3_DELIVERED + M4_DELIVERED)
+def test_delivered_commands_never_exit_three(command, tmp_path):
+    """退役的行为证据：任何已交付命令都**不可能**返回退出码 3。
 
-    在**没有配置、没有归档库、没有浏览器库**的隔离环境里跑（`HOME` / `USERPROFILE` /
-    `LOCALAPPDATA` 全部指向临时目录）：`snapshot` / `archive` 应报输入错误（2），
-    `status` 应报降级（1，档案还不存在）。三者都**不得**是 3。
+    在**没有配置、没有归档库**的隔离环境里跑：`snapshot` / `archive` 应报输入错误（2），
+    `status` / `search` / `report` / `cluster` 应报降级（1，"还没有档案"是用户旅程的正常起点）。
+    关键是**不得**是 3——那个语义在仓库里已经不存在了。
 
     **必须隔离 HOME**：不隔离时 `snapshot` 会真的去探测本机 Chrome 目录，
-    于是这条测试会读用户的真实浏览历史——测试读真实数据是绝对不能有的行为
-    （而且它还会把"本机库里有重复 visit 键"这类事实带进断言）。
+    于是这条测试会读用户的真实浏览历史（测试读真实数据是绝对不能有的行为）。
     """
     result = run_module(
         [command, "--config", str(EXAMPLE_CONFIG)],
         cwd=tmp_path,
         env_extra=_isolated_home(tmp_path),
     )
-    assert result.returncode != EXIT_NOT_READY, (
-        "%s 仍返回退出码 3（未就绪语义没有真正退役）" % command
-    )
+    assert result.returncode != 3, "%s 返回了退出码 3（未就绪语义没有真正退役）" % command
+    assert result.returncode in (1, 2)
 
 
-def test_status_without_archive_db_is_degraded_not_an_error(tmp_path):
-    """`status` 在档案不存在时是**降级完成**（1）而不是用法错误（2）。
+@pytest.mark.parametrize(
+    "command,expected_text,writes_out_dir",
+    (
+        # `status` 的行文是「归档库：<path>（不存在）」，其余读出口是「归档库尚不存在：…」。
+        # 两种措辞都是"降级完成"，断言按各自的实际文案点名（不为了统一断言去改用户文案）。
+        # `status` 也没有 `--out-dir`（它不产出任何文件）——参数面按各自的真实形态测。
+        ("status", "不存在", False),
+        ("search", "尚不存在", True),
+        ("report", "尚不存在", True),
+        ("cluster", "尚不存在", True),
+    ),
+)
+def test_readout_commands_are_degraded_when_archive_missing(
+    command, expected_text, writes_out_dir, tmp_path
+):
+    """读出口命令在档案不存在时是**降级完成**（1），且不写任何文件。
 
     "还没有档案"是用户旅程的正常起点，不是他敲错了命令。
     """
-    result = run_module(
-        ["status", "--config", str(EXAMPLE_CONFIG), "--archive-db", str(tmp_path / "none.db")],
-        cwd=tmp_path,
-    )
-    assert result.returncode == 1
-    assert "不存在" in stdout_text(result)
-    assert not (tmp_path / "none.db").exists(), "status 不得顺手建库"
+    out_dir = tmp_path / "out"
+    argv = [command, "--config", str(EXAMPLE_CONFIG), "--archive-db", str(tmp_path / "none.db")]
+    if writes_out_dir:
+        argv += ["--out-dir", str(out_dir)]
+    result = run_module(argv, cwd=tmp_path, env_extra=_isolated_home(tmp_path))
+    assert result.returncode == 1, "%s：档案缺失时应为降级（1）" % command
+    assert expected_text in stdout_text(result)
+    assert not (tmp_path / "none.db").exists(), "%s 不得顺手建库" % command
+    assert not out_dir.exists(), "%s 在档案缺失时不得写出任何产物" % command
 
 
 def test_snapshot_without_browser_dir_is_input_error(tmp_path):
@@ -206,23 +194,14 @@ def test_snapshot_without_browser_dir_is_input_error(tmp_path):
     assert "--browser-dir" in stderr_text(result)
 
 
-@pytest.mark.parametrize("command", sorted(STAGE_NOT_READY))
-def test_not_ready_commands_exit_3_without_reading_config(command, tmp_path):
-    """未就绪命令在**没有任何配置**的目录里也必须报 3（而不是因缺配置报 2）。"""
-    result = run_module([command], cwd=tmp_path)
-    assert result.returncode == EXIT_NOT_READY
-    assert "未交付" in stderr_text(result)
-    assert result.stdout == b""
-    assert list(tmp_path.iterdir()) == []  # 零写入
-
-
-def test_not_ready_message_has_no_internal_milestone_numbers():
+def test_user_facing_text_has_no_internal_milestone_numbers():
     """面向用户的文案不得引用内部里程碑编号（用户看不到计划，只看得到承诺）。"""
-    first_pending = sorted(STAGE_NOT_READY)[0]
-    result = run_module([first_pending])
-    text = stderr_text(result) + stdout_text(result)
-    for milestone in ("M1", "M2", "M3", "M4", "M5", "M6"):
-        assert milestone not in text
+    for argv in (["--help"], ["cluster", "--help"], ["report", "--help"]):
+        result = run_module(argv)
+        text = stderr_text(result) + stdout_text(result)
+        assert result.returncode == EXIT_OK, "%s 跑了非 0" % argv
+        for milestone in ("M1", "M2", "M3", "M4", "M5", "M6"):
+            assert milestone not in text, "%s 的文案里出现了里程碑编号 %s" % (argv, milestone)
 
 
 def test_explicit_missing_config_is_input_error_and_refuses_to_fall_back(tmp_path):
