@@ -43,9 +43,10 @@ def test_stream_without_encoding_is_skipped():
 def test_cli_survives_cp1252_stdio_via_subprocess():
     """真实通路：窄编码控制台下跑未就绪命令（会打印中文），不得崩在 print 上。
 
-    用仍是"未就绪"的命令（`search`）：它的路径只打印中文然后退出 3，**不碰任何文件**，
-    也不会去探测本机浏览器目录。曾经这里用的是 `snapshot`——那会在 M2 交付后
-    真的去读本机 Chrome 的真实浏览历史（实测踩到），测试读用户数据是绝对不能有的行为。
+    用**仍是"未就绪"的命令**（`search`/`report` 交付后只剩 `cluster`）：它的路径只打印
+    中文然后退出 3，**不碰任何文件**，也不会去探测本机浏览器目录。曾经这里用的是
+    `snapshot`——那会在 M2 交付后真的去读本机 Chrome 的真实浏览历史（实测踩到），
+    测试读用户数据是绝对不能有的行为。
     """
     from browser_history_vault.exit_codes import STAGE_NOT_READY
 

@@ -15,13 +15,23 @@ from typing import Dict, Tuple
 from .exit_codes import STAGE_NOT_READY
 
 #: 本版本真正可用的子命令（其余走"阶段未就绪"显式拒绝）。
-DELIVERED_COMMANDS: Tuple[str, ...] = ("snapshot", "archive", "status", "config", "selftest")
+DELIVERED_COMMANDS: Tuple[str, ...] = (
+    "snapshot",
+    "archive",
+    "status",
+    "search",
+    "report",
+    "config",
+    "selftest",
+)
 
 #: 已交付命令的一句话说明（进 `--help` 与 selftest 输出）。
 DELIVERED_COMMAND_HELP: Dict[str, str] = {
     "snapshot": "只读快照（复制浏览器 History + -wal + -shm 到临时目录，不写原库）",
     "archive": "增量归档（快照合并进自有长期档案库；重复归档幂等）",
     "status": "档案状态（归档覆盖区间与缺口提示）",
+    "search": "归档检索（标题/URL 的字 n-gram、域名与时间范围查询，导出 CSV）",
+    "report": "行为洞察（频次榜 / 时段热力 / 会话 / 遗忘的宝藏；数据层，报告页面在后继版本）",
     "config": "打印生效口径（数值口径唯一来源）与配置来源路径",
     "selftest": "数据底座与指令面自检（逐项可证伪）",
 }

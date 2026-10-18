@@ -34,7 +34,13 @@ class PrivacyError(ValueError):
         self.message = message
 
 
-def _host_matches(host: str, entry: str) -> bool:
+def host_matches_entry(host: str, entry: str) -> bool:
+    """K7 的匹配语义：`host == 项` **或** `host` 以 `"." + 项` 结尾（子域一并命中）。
+
+    公开成函数（不叫 `_host_matches`）是因为它有**两个**消费者：私密/敏感分类，
+    以及检索的 `--domain` 过滤——两者必须用同一套"域名的边界在哪"的口径，
+    否则"查 example.test 查不到 x.example.test"这类偏差会各自演化。
+    """
     normalized = str(entry).strip().lower()
     if not normalized:
         return False
@@ -54,10 +60,10 @@ def classify_host(
         raise PrivacyError("privacy-host", "host 必须是非空字符串，实际是 %r" % (host,))
     normalized = host.strip().lower()
     for entry in private_domains or ():
-        if _host_matches(normalized, entry):
+        if host_matches_entry(normalized, entry):
             return PRIVATE
     for entry in sensitive_domains or ():
-        if _host_matches(normalized, entry):
+        if host_matches_entry(normalized, entry):
             return SENSITIVE
     return PUBLIC
 
@@ -103,6 +109,57 @@ def fingerprint(host: str) -> str:
     sha256 的前 8 位是纯函数，同输入永远同输出。
     """
     return "h-" + hashlib.sha256(host.strip().lower().encode("utf-8")).hexdigest()[:8]
+
+
+def redact_text(
+    text: str,
+    host: str,
+    private_domains: Sequence[str],
+    sensitive_domains: Sequence[str],
+) -> str:
+    """把"可能回显主机名"的文本（URL / 标题）按主机分类处理。
+
+    为什么需要它：`mask_host` 只管"域名那一列"，但**URL 本身含主机名**、标题也可能回显域名
+    （`plan/04` 模块⑤ 的"含标题里的域名回显"）。只掩码域名列的实现会把原主机名从 URL 里漏出去——
+    判据是"原主机名**零出现**"，不是"域名列被掩码了"。
+
+    - 公开：原样返回；
+    - 敏感：把该主机名替换成掩码形态；
+    - 私密：直接报错（它本该在 `keep_visible` 那里就被剔除）。
+    """
+    kind = classify_host(host, private_domains, sensitive_domains)
+    if kind == PRIVATE:
+        raise PrivacyError(
+            "privacy-private-in-output",
+            "私密主机 %r 走到了输出面（应先经 keep_visible 剔除）" % (host,),
+        )
+    if kind == SENSITIVE:
+        return str(text).replace(host, mask_host(host))
+    return str(text)
+
+
+def display_host(
+    host: str,
+    private_domains: Sequence[str],
+    sensitive_domains: Sequence[str],
+) -> str:
+    """输出面的主机呈现（检索 / 报告共用；K26 的"敏感打码"那一条）。
+
+    - **公开**：原样小写返回；
+    - **敏感**：返回掩码（保留统计、只掩码）；
+    - **私密**：**直接报错**——私密记录本该在 `keep_visible` 那里就被剔掉，
+      走到呈现层说明门禁被绕过了。刻意"报错"而不是"顺手返回掩码"：
+      掩码会让"私密泄漏"退化成"显示有点怪"，而这里要的是当场红。
+    """
+    kind = classify_host(host, private_domains, sensitive_domains)
+    if kind == PRIVATE:
+        raise PrivacyError(
+            "privacy-private-in-output",
+            "私密主机 %r 走到了输出面（应先经 keep_visible 剔除）" % (host,),
+        )
+    if kind == SENSITIVE:
+        return mask_host(host)
+    return host.strip().lower()
 
 
 def summarize(
@@ -161,9 +218,12 @@ __all__ = [
     "PrivacyError",
     "classify_host",
     "classify_rows",
+    "display_host",
     "fingerprint",
+    "host_matches_entry",
     "is_excluded",
     "keep_visible",
     "mask_host",
+    "redact_text",
     "summarize",
 ]

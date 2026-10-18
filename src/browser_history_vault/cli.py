@@ -37,10 +37,21 @@ from .exit_codes import (
     EXIT_OK,
     STAGE_NOT_READY,
 )
+from .insight import InsightError, build_report, render_report
 from .normalizer import NormalizeError, normalize_database
 from .privacy import PrivacyError
-from .selftest import render_report, run_selftest
+from .search import (
+    DEFAULT_ORDER,
+    ORDER_KEYS,
+    SearchError,
+    SearchQuery,
+    render_search_summary,
+    search_rows,
+    write_csv as write_search_csv,
+)
+from .selftest import render_report as render_selftest_report, run_selftest
 from .serialize import write_json
+from .sessions import SessionError
 from .snapshot import (
     SnapshotError,
     SourceChangedError,
@@ -48,7 +59,7 @@ from .snapshot import (
     detect_sources,
     take_snapshot,
 )
-from .storage import StorageError
+from .storage import StorageError, connect_readonly, visit_view_rows
 from .timeutil import datetime_to_us
 
 PROG = "bhvault"
@@ -75,6 +86,9 @@ _INPUT_ERRORS = (
     PrivacyError,
     StorageError,
     ArchiveError,
+    SearchError,
+    InsightError,
+    SessionError,
     OSError,
     ValueError,
 )
@@ -124,6 +138,8 @@ def build_parser() -> argparse.ArgumentParser:
         "snapshot": _add_snapshot_arguments,
         "archive": _add_archive_arguments,
         "status": _add_status_arguments,
+        "search": _add_search_arguments,
+        "report": _add_report_arguments,
         "config": _add_config_arguments,
         "selftest": _add_selftest_arguments,
     }
@@ -204,12 +220,7 @@ def _add_archive_arguments(subparsers, common, name) -> None:
         common,
     )
     _add_data_arguments(sub)
-    sub.add_argument(
-        "--archive-db",
-        metavar="PATH",
-        default=None,
-        help="归档库路径（默认 <用户主目录>/.browser-history-vault/%s）" % DEFAULT_ARCHIVE_FILENAME,
-    )
+    _add_archive_db_argument(sub)
 
 
 def _add_status_arguments(subparsers, common, name) -> None:
@@ -219,11 +230,81 @@ def _add_status_arguments(subparsers, common, name) -> None:
         "档案状态：归档覆盖区间与缺口（只读，不建库、不写任何文件）。",
         common,
     )
+    _add_archive_db_argument(sub)
+    sub.add_argument("--json", action="store_true", help="输出机读 JSON（键排序 / LF / 结尾换行）")
+
+
+def _add_archive_db_argument(sub: argparse.ArgumentParser) -> None:
     sub.add_argument(
         "--archive-db",
         metavar="PATH",
         default=None,
         help="归档库路径（默认 <用户主目录>/.browser-history-vault/%s）" % DEFAULT_ARCHIVE_FILENAME,
+    )
+
+
+def _add_search_arguments(subparsers, common, name) -> None:
+    sub = _new_parser(
+        subparsers,
+        name,
+        "归档检索：在**自己的档案库**上按字 n-gram（标题 ∪ URL）、域名与时间范围查询，"
+        "结果落 CSV（列序固定）。纯子串级匹配，不引分词库、不联网词典。",
+        common,
+    )
+    sub.add_argument(
+        "query",
+        nargs="?",
+        default=None,
+        help="查询串（对标题与 URL 做字 n-gram 包含匹配）；省略即不按文本过滤",
+    )
+    sub.add_argument(
+        "--domain",
+        metavar="HOST",
+        default=None,
+        help="域名过滤：主机等于该值或其子域（匹配语义与私密清单一致）",
+    )
+    sub.add_argument("--since-us", metavar="EPOCH_US", type=int, default=None, help="时间下界（含）")
+    sub.add_argument("--until-us", metavar="EPOCH_US", type=int, default=None, help="时间上界（含）")
+    sub.add_argument("--limit", metavar="N", type=int, default=None, help="返回条数上限（省略 = 全部）")
+    sub.add_argument("--offset", metavar="N", type=int, default=0, help="跳过的条数（分页；默认 0）")
+    sub.add_argument(
+        "--order",
+        choices=tuple(sorted(ORDER_KEYS)),
+        default=DEFAULT_ORDER,
+        help="排序键白名单（默认 %s：访问时间降序 + visit_id 升序）" % DEFAULT_ORDER,
+    )
+    _add_archive_db_argument(sub)
+    sub.add_argument(
+        "--out-dir",
+        metavar="DIR",
+        default=DEFAULT_OUT_DIR,
+        help="输出目录（写 search.json 与 search.csv；默认 %s）" % DEFAULT_OUT_DIR,
+    )
+    sub.add_argument("--json", action="store_true", help="输出机读 JSON（键排序 / LF / 结尾换行）")
+
+
+def _add_report_arguments(subparsers, common, name) -> None:
+    sub = _new_parser(
+        subparsers,
+        name,
+        "行为洞察（**数据层**）：覆盖区间与缺口、频次榜、域名集中度、时段热力、会话、遗忘的宝藏。"
+        "口径全部取自配置文件，报告里回显实际取值；单文件 HTML 页面在后续版本交付。",
+        common,
+    )
+    _add_archive_db_argument(sub)
+    sub.add_argument(
+        "--out-dir",
+        metavar="DIR",
+        default=DEFAULT_OUT_DIR,
+        help="输出目录（写 report.json；默认 %s）" % DEFAULT_OUT_DIR,
+    )
+    sub.add_argument(
+        "--at-us",
+        metavar="EPOCH_US",
+        type=int,
+        default=None,
+        help="覆盖『现在』（浏览器纪元微秒，经 timeutil 换算）；默认取系统时钟。"
+        "显式给出便于复跑对账（『今天』决定遗忘判定）",
     )
     sub.add_argument("--json", action="store_true", help="输出机读 JSON（键排序 / LF / 结尾换行）")
 
@@ -309,7 +390,7 @@ def _cmd_selftest(args: argparse.Namespace) -> int:
     if args.json:
         _emit_machine(json_bytes(report.to_document()))
     else:
-        sys.stdout.write(render_report(report))
+        sys.stdout.write(render_selftest_report(report))
     return EXIT_OK if report.ok else EXIT_DEGRADED
 
 
@@ -456,6 +537,129 @@ def _cmd_status(args: argparse.Namespace) -> int:
     return EXIT_OK if report.exists else EXIT_DEGRADED
 
 
+def _read_archive_rows(archive_db: Path):
+    """只读打开归档库并读回**可下钻**的行集（`search` / `report` 共用这一条读出口）。"""
+    connection = connect_readonly(archive_db)
+    try:
+        return visit_view_rows(connection)
+    finally:
+        connection.close()
+
+
+_MISSING_ARCHIVE_NOTE = "归档库尚不存在：先跑一次 bhvault archive --browser-dir <浏览器库目录>"
+
+
+def _cmd_search(args: argparse.Namespace) -> int:
+    loaded = load_config(args.config)
+    config = loaded.config
+    archive_db = _archive_db_path(args)
+    out_dir = Path(args.out_dir)
+    if not archive_db.is_file():
+        document = {
+            "_kind": "browser-history-vault/search-result",
+            "_deterministic": True,
+            "archive_db": str(archive_db),
+            "exists": False,
+            "counts": {"matched_records": 0, "returned_records": 0, "distinct_urls": 0},
+            "hits": [],
+            "note": _MISSING_ARCHIVE_NOTE,
+        }
+        if args.json:
+            _emit_machine(json_bytes(document))
+        else:
+            sys.stdout.write("== bhvault search ==\n%s\n" % _MISSING_ARCHIVE_NOTE)
+        return EXIT_DEGRADED
+
+    rows = _read_archive_rows(archive_db)
+    result = search_rows(
+        rows,
+        SearchQuery(
+            text=args.query,
+            domain=args.domain,
+            since_us=args.since_us,
+            until_us=args.until_us,
+            limit=args.limit,
+            offset=args.offset,
+            order=args.order,
+        ),
+        ngram_n=config.ngram_n,
+        private_domains=config.private_domains,
+        sensitive_domains=config.sensitive_domains,
+    )
+    document = dict(
+        result.to_document(
+            offset_minutes=config.timezone_utc_offset_minutes,
+            private_domains=config.private_domains,
+            sensitive_domains=config.sensitive_domains,
+        ),
+        archive_db=str(archive_db),
+        exists=True,
+        config_path=str(loaded.path),
+    )
+    write_json(out_dir / "search.json", document)
+    # CSV 与 JSON 是**同一批命中**的两种形态：列序固定、过同一隐私门禁（K26 / K20③）。
+    write_search_csv(
+        out_dir / "search.csv",
+        result.hits,
+        offset_minutes=config.timezone_utc_offset_minutes,
+        private_domains=config.private_domains,
+        sensitive_domains=config.sensitive_domains,
+    )
+    if args.json:
+        _emit_machine(json_bytes(document))
+        return EXIT_OK
+    sys.stdout.write(render_search_summary(result))
+    sys.stdout.write("结果集：%s（CSV）与 %s（机读）\n" % (out_dir / "search.csv", out_dir / "search.json"))
+    return EXIT_OK
+
+
+def _cmd_report(args: argparse.Namespace) -> int:
+    loaded = load_config(args.config)
+    config = loaded.config
+    archive_db = _archive_db_path(args)
+    out_dir = Path(args.out_dir)
+    if not archive_db.is_file():
+        document = {
+            "_kind": "browser-history-vault/insight-report",
+            "_deterministic": False,
+            "archive_db": str(archive_db),
+            "exists": False,
+            "counts": {
+                "archive_records": 0,
+                "visible_records": 0,
+                "private_records_excluded": 0,
+                "sensitive_records_masked": 0,
+            },
+            "forgotten": {"state": "not_assessed", "matched_count": 0, "items": []},
+            "note": _MISSING_ARCHIVE_NOTE,
+        }
+        if args.json:
+            _emit_machine(json_bytes(document))
+        else:
+            sys.stdout.write("== bhvault report ==\n%s\n" % _MISSING_ARCHIVE_NOTE)
+        return EXIT_DEGRADED
+
+    now_us = int(args.at_us) if args.at_us is not None else _now_us()
+    rows = _read_archive_rows(archive_db)
+    document = dict(
+        build_report(
+            rows,
+            config=config,
+            now_us=now_us,
+            archive_db=str(archive_db),
+            config_path=str(loaded.path),
+        ),
+        exists=True,
+    )
+    write_json(out_dir / "report.json", document)
+    if args.json:
+        _emit_machine(json_bytes(document))
+        return EXIT_OK
+    sys.stdout.write(render_report(document))
+    sys.stdout.write("结构化结果：%s\n" % (out_dir / "report.json"))
+    return EXIT_OK
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     ensure_utf8_stdio()
     parser = build_parser()
@@ -475,6 +679,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "snapshot": _cmd_snapshot,
         "archive": _cmd_archive,
         "status": _cmd_status,
+        "search": _cmd_search,
+        "report": _cmd_report,
     }
     handler = handlers.get(command)
     if handler is None:  # pragma: no cover - 由 build_parser 的构造表自证覆盖

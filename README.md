@@ -1,6 +1,6 @@
 # browser-history-vault（浏览器历史本地知识库）
 
-**状态：开发中（归档层已可用，洞察模块逐个落地）** —— 题面与计划见 [plan/00-README总览.md](plan/00-README总览.md)。本版本已交付**只读快照 + 增量归档 + 档案状态**、**自检命令**与**可复跑的合成数据底座**（合成 History 库 + 植入真值 + 基准 B0/B1），检索 / 报告 / 聚类按里程碑逐个落地。
+**状态：开发中（归档 + 检索 + 行为洞察数据层已可用）** —— 题面与计划见 [plan/00-README总览.md](plan/00-README总览.md)。本版本已交付**只读快照 + 增量归档 + 档案状态**、**归档检索（含 CSV 导出）**、**行为洞察数据层**（频次榜 / 域名集中度 / 时段热力 / 会话 / 遗忘的宝藏）、**自检命令**与**可复跑的合成数据底座**（合成 History 库 + 植入真值 + 基准 B0–B3）；单文件 HTML 报告与主题聚类按里程碑逐个落地。
 
 浏览器只替你留 **90 天**历史，然后静默删除。本工具做「**先归档、再分析**」：首次运行把本地 `History` 的**只读快照**沉淀成自己的长期档案，之后回答「我过去在做什么」「哪些是遗忘的宝藏」「我的作息与兴趣怎么变」。
 
@@ -35,6 +35,10 @@ bhvault selftest --data-root data
 bhvault snapshot --browser-dir "<Chrome 或 Edge 的 profile 目录>"
 bhvault archive  --browser-dir "<同一个目录>"
 bhvault status                                  # 覆盖区间与缺口
+
+# 7) 在档案库上检索与洞察（纯本地；私密域名默认排除）
+bhvault search "关键词" --out-dir out/           # 出 out/search.csv（列序固定）与 out/search.json
+bhvault report --out-dir out/                    # 出 out/report.json 与人读文本
 ```
 
 `python -m browser_history_vault ...` 与 `bhvault ...` 是**行为等价的两条通路**（前者不依赖安装，后者验证安装面）。
@@ -48,11 +52,34 @@ bhvault status                                  # 覆盖区间与缺口
 | `bhvault status` | 档案状态（归档覆盖区间与缺口提示） | ✅ 已交付 |
 | `bhvault config` | 打印生效口径（配置是数值口径唯一来源）与配置来源 | ✅ 已交付 |
 | `bhvault selftest` | 数据底座与指令面自检（逐项可证伪） | ✅ 已交付 |
-| `bhvault search` | 归档检索（URL / 标题 / 域名 / 时间范围，CSV 导出） | ⬜ 未交付（退出码 3） |
-| `bhvault report` | 行为洞察报告（频次榜 / 时段热力 / 会话 / 遗忘的宝藏） | ⬜ 未交付（退出码 3） |
+| `bhvault search` | 归档检索（标题 / URL 的字 n-gram、域名、时间范围；CSV 导出） | ✅ 已交付 |
+| `bhvault report` | 行为洞察**数据层**（频次榜 / 域名集中度 / 时段热力 / 会话 / 遗忘的宝藏） | ✅ 已交付（单文件 HTML 报告在后续版本） |
 | `bhvault cluster` | 主题聚类与研究路径 | ⬜ 未交付（退出码 3） |
 
 未交付的命令会**显式拒绝**（不伪造空结果、不读配置、不写任何文件），并在后续版本逐个转正。
+
+### 检索与洞察怎么用
+
+```bash
+# 检索：中文走字 n-gram 包含匹配（检索面 = 标题 ∪ URL）；结果落 CSV 与机读 JSON
+bhvault search "示例文章" --out-dir out/            # 出 out/search.csv 与 out/search.json
+bhvault search --domain example.test --limit 20     # 域名过滤（含子域）+ 分页
+bhvault search "示例文章" --offset 10 --limit 10     # 分页在同一排序键下稳定可复现
+
+# 行为洞察（数据层）：覆盖区间与缺口 / 频次榜 / 集中度 / 热力 / 会话 / 遗忘的宝藏
+bhvault report --out-dir out/                       # 出 out/report.json + 人读文本
+bhvault report --at-us 13436683200000000            # 显式给出"现在"（便于复跑对账）
+```
+
+- **命中语义是子串级**：查询串与目标都切成**字 n-gram**（粒度 = `config.example.json` 的
+  `search.ngram_n`）做包含匹配——不引分词库、不联网词典，**不是**语义检索。ASCII 查询大小写不敏感。
+- **排序键显式**：访问时间降序 + `visit_id` 升序（并列名次有次排序键，分页才稳定）。
+- **`--domain` 与私密清单共用同一套匹配语义**（主机相等或其子域）。
+- **检索与洞察的输出都过隐私门禁**：私密域名**零出现**（连统计都不进），敏感域名保留统计但**打码**
+  （含 URL 与标题里的主机名回显）。判据是**主机身份**而不是子串——`localhost.example.test` 这类
+  "形似而非"的公开主机不会被误伤。
+- `report` 里的每个聚合数字都带 `visit_id` 引用，可在档案库里逐条解析（数字可下钻）；
+  实际生效的口径（N 的取值、会话间隔、时区、起算日）都会回显在报告里。
 
 ### 归档怎么用（三步）
 
@@ -89,14 +116,16 @@ bhvault status --archive-db ~/.browser-history-vault/archive.db
 - **只读纪律**：绝不写浏览器原库；所有读取都针对副本或本工具自己的档案库。归档前后对源库比对 `mtime` **与字节 sha256**，不一致即报错并整笔回滚。
 - **口径单一定义**：会话间隔、未访问天数 N、私密域名清单、聚类阈值、时区、随机种子全部只在 [config.example.json](config.example.json) 一处定义；代码、报告、文档均从该处取值，**代码不留默认值**（有默认值 = 配置改不动它）。
 - **确定性纪律**：同一输入 + 同一配置 → 同一输出。机读产物统一走确定性序列化（键排序 / UTF-8 / LF / 结尾换行），`bhvault config` 两次运行输出逐字节一致（有测试锁定）。
-- **可下钻纪律**：报告中的每个聚合数字都要能追溯到原始访问行（随报告模块交付）。
+- **可下钻纪律**：报告中的每个聚合数字都要能追溯到原始访问行（检索与洞察的每个榜单项都带
+  `visit_id`，并有行数对账断言）。
 
 ## 隐私承诺
 
 - 只处理**副本**：`History` / `History-wal` / `History-shm` 复制到临时目录后读取，**绝不以写模式打开用户浏览器库**；连"只读打开"也不落在源库上（WAL 库被打开时会在源目录建 `-shm`，实测踩到并已规避）。
 - 默认排除**私密域名清单**（只在配置一处定义，不可静默关闭）；敏感域名在报告中打码。
 - 归档库是**你自己的长期档案**：它保留全量记录（含私密域名），这样"改了清单也还找得回"；私密域名只在**输出面**（报告 / CSV / 导出 / 打印）零出现——`<out-dir>/canonical/*.visits.jsonl` 已经过门禁，归档库里的私密记录不会被任何输出带出去。
-- 报告为**单文件 HTML**，零外链、零网络请求，可离线打开。
+- 私密域名在**输出面**零出现：检索结果、CSV、报告 JSON 与人读文本都不含它，**连会话数、热力分桶、集中度分母这类统计都不进**（K26 / K31）；敏感域名保留统计但**打码**呈现，URL 与标题里的主机名回显也一并打码。判据是**主机身份**而不是子串——`localhost.example.test` 这类「形似而非」的公开主机不会被误伤。
+- 报告为**单文件 HTML**，零外链、零网络请求，可离线打开（HTML 出口在后续版本交付；本版本的检索与洞察产物是 CSV 与结构化 JSON）。
 - **不上传任何数据、无账号、无云同步**。
 - 口径与证据范围（不夸大）：本版本已实现的是 **本项目代码不含任何网络调用路径**（源码 import 面 AST 守门 + 运行时 socket 拦截双证，见 [tests/test_no_network.py](tests/test_no_network.py)）；发布产物层面（wheel/sdist 扫描、加载面审计）在发布里程碑执行并留档。
 
@@ -104,8 +133,8 @@ bhvault status --archive-db ~/.browser-history-vault/archive.db
 
 浏览器默认只保留约 90 天历史，**旧数据可能已不可恢复**。因此：
 
-- `bhvault status` 必须显示**归档覆盖区间**与缺口（`status` 已落地：逐来源的区间、有数据天数、缺口段）；
-- 报告与 README 都显示覆盖区间与缺口（报告面随报告模块交付）；
+- `bhvault status` 与 `bhvault report` 都显示**归档覆盖区间**与缺口（逐来源的区间、有数据天数、缺口段）；
+- 报告里"仅覆盖约 90 天"这类提示由**覆盖区间实际算出**，不是写死的文案；
 - 本工具是自我洞察辅助，不构成对个人行为的评价或决策依据；归档数据由用户自行保管。
 
 ## 数据与合成样本
@@ -118,8 +147,8 @@ bhvault status --archive-db ~/.browser-history-vault/archive.db
 
 ```bash
 py -3.12 tools/gen_synthetic_history.py --check      # 两层断言：冻结产物形态 + 重生成逐字节一致
-py -3.12 tools/bench.py --only B0 B1                 # 基准：真值复算 + 归档幂等（门槛从台账读）
-py -3.12 tools/bench.py --probe --only B0 B1         # 可证伪探活：注入缺陷 → 必须报未达标
+py -3.12 tools/bench.py --only B0 B1 B2 B3           # 基准：真值复算 / 归档幂等 / 查询确定性 / 洞察口径
+py -3.12 tools/bench.py --probe --only B0 B1 B2 B3   # 可证伪探活：注入缺陷 → 必须报未达标（15 条）
 ```
 
 ## 局限与已知问题
@@ -136,7 +165,7 @@ py -3.12 tools/bench.py --probe --only B0 B1         # 可证伪探活：注入�
 ```bash
 python -m pytest -q                                  # 全量测试
 py -3.12 tools/gen_synthetic_history.py --check       # 合成数据两层断言（形态 + 重生成逐字节）
-py -3.12 tools/bench.py --only B0 B1                  # 基准（B2–B5 待各自模块落地后启用）
+py -3.12 tools/bench.py --only B0 B1 B2 B3            # 基准（B4/B5 待各自模块落地后启用）
 py -3.12 tools/smoke_cli.py --require-console-script  # 离线 CLI 冒烟（两条通路 × 已交付命令）
 py -3.12 tools/check_release.py . --no-gh             # 发布终态门禁（发布前本来就该红）
 ```

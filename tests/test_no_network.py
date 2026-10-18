@@ -85,3 +85,33 @@ def test_delivered_command_makes_no_socket_calls(monkeypatch):
     monkeypatch.setattr(socket, "getaddrinfo", boom)
     monkeypatch.setattr(socket, "create_connection", boom)
     assert main(["config", "--config", str(EXAMPLE_CONFIG)]) == 0
+
+
+def test_search_and_report_make_no_socket_calls(tmp_path, monkeypatch):
+    """检索与洞察也必须断网可用（`plan/04` 模块②的验收判据：配 socket 拦截跑一遍）。
+
+    这一条真跑"归档 → 检索 → 洞察"的完整链路：不联词典、不联 embedding、不联任何服务，
+    全部算力都在本地档案库上（K17 的第一层是 AST 面，这里是运行时的第二层）。
+    """
+    from helpers import anchor_noon_us, build_fixture_archive
+
+    archive_db = build_fixture_archive(tmp_path)
+    out_dir = str(tmp_path / "out")
+
+    def boom(*args, **kwargs):
+        raise AssertionError("检索/洞察不得发起网络活动")
+
+    monkeypatch.setattr(socket.socket, "connect", boom, raising=False)
+    monkeypatch.setattr(socket, "getaddrinfo", boom)
+    monkeypatch.setattr(socket, "create_connection", boom)
+
+    assert main([
+        "search", "示例文章", "--config", str(EXAMPLE_CONFIG),
+        "--archive-db", str(archive_db), "--out-dir", out_dir,
+    ]) == 0
+    assert main([
+        "report", "--config", str(EXAMPLE_CONFIG), "--archive-db", str(archive_db),
+        "--out-dir", out_dir, "--at-us", str(anchor_noon_us()),
+    ]) == 0
+    assert (tmp_path / "out" / "search.csv").is_file()
+    assert (tmp_path / "out" / "report.json").is_file()

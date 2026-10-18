@@ -201,13 +201,17 @@
         "title": "归档幂等（只读 + 幂等 + url_id 稳定 + 覆盖区间）"
       },
       "B2": {
-        "enabled": false,
-        "not_enabled_reason": "检索模块尚未交付",
-        "title": "查询确定性"
+        "enabled": true,
+        "max_false_positive": 0.0,
+        "min_detection_rate": 1.0,
+        "notes": "样本驱动：8 条检索真值逐条对撞（含 2 条必须 0 命中的反例）；规则驱动：复跑逐字节一致 / 打乱输入顺序 / 分页拼接 = 全量 / CSV 列序读回 / 私密零出现",
+        "title": "查询确定性（排序键 / 分页 / CSV / 隐私）"
       },
       "B3": {
-        "enabled": false,
-        "not_enabled_reason": "洞察模块尚未交付；数据侧真值已就位",
+        "enabled": true,
+        "max_false_positive": 0.0,
+        "min_detection_rate": 1.0,
+        "notes": "样本驱动：会话 8 / 遗忘 16 / 热力 8 / 集中度 4 逐条点名；规则驱动：间隔 ±1 秒、天数 ±1、空分母与单条、与参照实现逐口径对撞、visit_id 下钻对账",
         "title": "洞察口径（会话/遗忘/热力/集中度）"
       },
       "B4": {
@@ -415,7 +419,7 @@
   "generator": {
     "note": "生成器自身的 sha256 进台账：改了生成器就必须重生成并提交，防『改了生成器没重生成数据』的静默漂移",
     "path": "tools/gen_synthetic_history.py",
-    "sha256": "9350347afa7cffda9d72335323967143d5968da729f7801cfaf328f42cdbe060"
+    "sha256": "7630d5ef441b448dec16c6933ebb3a9d0f7b24a6924097a3ff9d78baa46602e2"
   },
   "invariants": {
     "background_days_before": "背景总体分两层：近期密集段落在锚点前 21..85 日，更早的零星残留落在 160..520 日；两层之间的真空与其余空日合起来构成 coverage.gaps。锚点前 1..13 日留给会话/路径样本（保证样本时间邻域隔离）",

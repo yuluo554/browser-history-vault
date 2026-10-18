@@ -22,6 +22,7 @@
 """
 
 import argparse
+import datetime
 import json
 import os
 import shutil
@@ -36,6 +37,25 @@ EXAMPLE_CONFIG = REPO_ROOT / "config.example.json"
 DATA_ROOT = REPO_ROOT / "data"
 FIXTURE_DIR = DATA_ROOT / "fixtures" / "synthetic"
 MODULE = "browser_history_vault"
+
+if str(SRC_ROOT) not in sys.path:
+    # 让本脚本能读到"命令登记表/时间换算"这类**单点定义**（不是自己抄一份）：
+    # 冒烟里出现第二份"未就绪命令清单"或第二份纪元换算，就等于把口径又写了一遍。
+    sys.path.insert(0, str(SRC_ROOT))
+
+from browser_history_vault.exit_codes import STAGE_NOT_READY  # noqa: E402
+from browser_history_vault.timeutil import local_us_of_datetime  # noqa: E402
+
+
+def _anchor_noon_us() -> int:
+    """冻结台账的锚点日正午 → 纪元微秒（报告的『今天』由数据下发，不由本脚本猜）。"""
+    manifest = json.loads((FIXTURE_DIR / "manifest.json").read_text(encoding="utf-8"))
+    year, month, day = [int(part) for part in str(manifest["anchor_local_date"]).split("-")]
+    offset = int(manifest["source_config"]["params"]["timezone_utc_offset_minutes"])
+    return local_us_of_datetime(datetime.datetime(year, month, day, 12, 0, 0), offset)
+
+
+ANCHOR_NOON_US = _anchor_noon_us()
 
 RESULTS = []  # (level, name, detail)
 PASS, FAIL, SKIP = "PASS", "FAIL", "SKIP"
@@ -234,9 +254,142 @@ def smoke_channel(label, base, tmp_dir):
     else:
         add(PASS, "%s/status-read-only" % label, "status 未创建任何文件")
 
-    # ---- 未就绪命令仍然显式拒绝（剩余三条） ----
-    code, out, err = run(base + ["search"], env_extra=isolated)
-    add(PASS if code == 3 else FAIL, "%s/not-ready" % label, "未交付命令 rc=%d（期望 3）" % code)
+    # ---- search：检索（真值里的中文查询）+ CSV 落盘 + 0 命中的反例 ----
+    code, out, err = run(
+        base + ["search", "示例文章", "--config", str(EXAMPLE_CONFIG), "--archive-db", archive_db,
+                "--out-dir", out_dir, "--json"],
+        env_extra=isolated,
+    )
+    ok = code == 0
+    detail = "rc=%d" % code
+    if ok:
+        try:
+            document = json.loads(out.decode("utf-8"))
+            urls = sorted(hit["url"] for hit in document["hits"])
+            ok = (
+                len(urls) == 3
+                and all(url.startswith("https://topic-a.example.test/") for url in urls)
+                and document["counts"]["matched_records"] == 3
+            )
+            detail = "rc=0，命中 %d 条（中文查询走字 n-gram）" % len(urls)
+        except (ValueError, KeyError, TypeError) as exc:
+            ok = False
+            detail = "机读输出不符合预期：%s" % exc
+    add(PASS if ok else FAIL, "%s/search" % label, detail)
+
+    csv_path = Path(out_dir) / "search.csv"
+    ok = csv_path.is_file()
+    detail = "缺 %s" % csv_path
+    if ok:
+        import csv as _csv
+
+        with csv_path.open("r", encoding="utf-8", newline="") as handle:
+            rows = list(_csv.reader(handle))
+        header = rows[0] if rows else []
+        expected_header = ["visit_id", "visit_time_local", "url", "title", "domain", "source_browser"]
+        ok = header == expected_header and len(rows) == 4
+        detail = "列序%s，数据 %d 行" % ("固定" if header == expected_header else "漂移：%s" % header, max(0, len(rows) - 1))
+    add(PASS if ok else FAIL, "%s/search-csv" % label, detail)
+
+    code, out, err = run(
+        base + ["search", "文章示例", "--config", str(EXAMPLE_CONFIG), "--archive-db", archive_db,
+                "--out-dir", out_dir + "-miss", "--json"],
+        env_extra=isolated,
+    )
+    ok = code == 0
+    detail = "rc=%d" % code
+    if ok:
+        try:
+            document = json.loads(out.decode("utf-8"))
+            ok = document["hits"] == [] and document["counts"]["matched_records"] == 0
+            detail = "rc=0，反例查询命中 0 条（含『章示』n-gram 不存在）"
+        except (ValueError, KeyError) as exc:
+            ok = False
+            detail = "机读输出不符合预期：%s" % exc
+    add(PASS if ok else FAIL, "%s/search-counterexample" % label, detail)
+
+    # ---- report：洞察数据层（阈值回显 + 覆盖区间 + 遗忘命中） ----
+    code, out, err = run(
+        base + ["report", "--config", str(EXAMPLE_CONFIG), "--archive-db", archive_db,
+                "--out-dir", out_dir, "--at-us", str(ANCHOR_NOON_US), "--json"],
+        env_extra=isolated,
+    )
+    ok = code == 0
+    detail = "rc=%d" % code
+    if ok:
+        try:
+            document = json.loads(out.decode("utf-8"))
+            thresholds = document["forgotten"]["thresholds"]
+            ok = (
+                document["forgotten"]["state"] == "assessed"
+                and thresholds["days_threshold"] == 90
+                and document["coverage"]["first_local_date"]
+                and document["coverage"]["last_local_date"]
+                and document["counts"]["private_records_excluded"] > 0
+                and document["sessions"]["session_count"] > 0
+            )
+            detail = "rc=0，命中 %d 项；覆盖 %s → %s；私密排除 %d 条" % (
+                document["forgotten"]["matched_count"],
+                document["coverage"]["first_local_date"], document["coverage"]["last_local_date"],
+                document["counts"]["private_records_excluded"],
+            )
+        except (ValueError, KeyError, TypeError) as exc:
+            ok = False
+            detail = "机读输出不符合预期：%s" % exc
+    add(PASS if ok else FAIL, "%s/report" % label, detail)
+
+    report_json = Path(out_dir) / "report.json"
+    ok = report_json.is_file()
+    detail = "缺 %s" % report_json
+    if ok:
+        try:
+            document = json.loads(report_json.read_text(encoding="utf-8"))
+            ok = document["_kind"] == "browser-history-vault/insight-report"
+            detail = "结构化结果已落盘（%d 字节）" % report_json.stat().st_size
+        except (ValueError, KeyError) as exc:
+            ok = False
+            detail = "落盘结果不可读：%s" % exc
+    add(PASS if ok else FAIL, "%s/report-json" % label, detail)
+
+    # 人读形态：覆盖区间与缺口必须在输出里可见（K25）
+    code, out, err = run(
+        base + ["report", "--config", str(EXAMPLE_CONFIG), "--archive-db", archive_db,
+                "--out-dir", out_dir, "--at-us", str(ANCHOR_NOON_US)],
+        env_extra=isolated,
+    )
+    text = out.decode("utf-8", "replace")
+    ok = code == 0 and "覆盖区间" in text and "遗忘的宝藏" in text and "会话" in text
+    add(PASS if ok else FAIL, "%s/report-text" % label,
+        "rc=%d，覆盖区间%s，遗忘区块%s" % (code, "有" if "覆盖区间" in text else "缺",
+                                     "有" if "遗忘的宝藏" in text else "缺"))
+
+    # ---- 档案不存在时：检索与报告都是降级（1），且不写任何产物 ----
+    missing_db = str(tmp_dir / "definitely-missing.db")
+    missing_out = str(tmp_dir / "out-missing")
+    code, out, err = run(
+        base + ["search", "示例", "--config", str(EXAMPLE_CONFIG), "--archive-db", missing_db,
+                "--out-dir", missing_out],
+        env_extra=isolated,
+    )
+    add(PASS if code == 1 else FAIL, "%s/search-no-archive" % label,
+        "rc=%d（期望 1：还没有档案是降级，不是用法错误）" % code)
+    code, out, err = run(
+        base + ["report", "--config", str(EXAMPLE_CONFIG), "--archive-db", missing_db,
+                "--out-dir", missing_out],
+        env_extra=isolated,
+    )
+    add(PASS if code == 1 else FAIL, "%s/report-no-archive" % label,
+        "rc=%d（期望 1）" % code)
+    if Path(missing_out).exists():
+        add(FAIL, "%s/no-archive-writes-nothing" % label, "档案缺失时仍写出了产物目录")
+    else:
+        add(PASS, "%s/no-archive-writes-nothing" % label, "档案缺失时未写任何文件")
+
+    # ---- 未就绪命令仍然显式拒绝（剩余一条） ----
+    pending = sorted(STAGE_NOT_READY)
+    code, out, err = run(base + [pending[0]], env_extra=isolated)
+    add(PASS if code == 3 else FAIL, "%s/not-ready" % label,
+        "未交付命令 %s rc=%d（期望 3）" % (pending[0], code))
 
     code, out, err = run(base + ["not-a-command"], env_extra=isolated)
     add(PASS if code == 2 else FAIL, "%s/unknown-command" % label, "未知命令 rc=%d（期望 2）" % code)
@@ -245,7 +398,7 @@ def smoke_channel(label, base, tmp_dir):
     ok = code == 2 and "不会回落" in err.decode("utf-8", "replace")
     add(PASS if ok else FAIL, "%s/explicit-config-strict" % label, "无效 --config rc=%d（期望 2 且明写不回落）" % code)
 
-    code, out, err = run(base + ["search"], env_extra=dict(isolated, PYTHONIOENCODING="cp1252"))
+    code, out, err = run(base + [pending[0]], env_extra=dict(isolated, PYTHONIOENCODING="cp1252"))
     text = err.decode("utf-8", "replace")
     ok = code == 3 and "UnicodeEncodeError" not in text and "Traceback" not in text
     add(PASS if ok else FAIL, "%s/cp1252-stdio" % label, "窄编码控制台 rc=%d，无编码崩溃" % code)

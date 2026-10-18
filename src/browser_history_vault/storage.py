@@ -440,6 +440,43 @@ def visit_rows(connection: sqlite3.Connection) -> List[Dict[str, Any]]:
     ]
 
 
+def visit_view_rows(connection: sqlite3.Connection) -> List[Dict[str, Any]]:
+    """归档库读回的**可下钻**行：在 `CANONICAL_FIELDS` 之上补 `visit_id` / `url_id`。
+
+    与 `visit_rows` 的分工（两者都保留，别合并）：
+
+    - `visit_rows` 的字段集合 = 规范化导出契约，用于**逐字节对撞**（多一个字段就没法比）；
+    - 本函数多带 `visit_id` / `url_id`，供检索与洞察层做"每个聚合数字可下钻"的引用
+      （`plan/04` §0 的通用约定：`evidence` 字段携带 `visit_id` 供下钻）。
+
+    排序 = `(visit_time_us, url, source_browser, source_profile, visit_id)`：**显式全序**，
+    不依赖磁盘物理序。检索层要的"时间降序 + visit_id 升序"由它自己再排一次
+    （同一份数据可以被多个口径按不同排序键消费，DAO 不替调用方定口径）。
+    """
+    return [
+        {
+            "visit_id": int(row["visit_id"]),
+            "url_id": int(row["url_id"]),
+            "url": str(row["url"]),
+            "title": str(row["title"]),
+            "host": str(row["domain"]),
+            "visit_time_us": int(row["visit_time_us"]),
+            "source_browser": str(row["source_browser"]),
+            "source_profile": str(row["source_profile"]),
+            "transition": int(row["transition"]),
+            "visit_duration_us": int(row["visit_duration_us"]),
+        }
+        for row in connection.execute(
+            "SELECT v.visit_id AS visit_id, v.url_id AS url_id, u.url AS url, u.title AS title, "
+            "u.domain AS domain, v.visit_time_us AS visit_time_us, v.transition AS transition, "
+            "v.visit_duration_us AS visit_duration_us, v.source_browser AS source_browser, "
+            "v.source_profile AS source_profile "
+            "FROM visits v JOIN urls u ON u.url_id = v.url_id "
+            "ORDER BY v.visit_time_us, u.url, v.source_browser, v.source_profile, v.visit_id"
+        )
+    ]
+
+
 __all__ = [
     "ArchiveCounters",
     "EMPTY_SENTINEL",
@@ -462,4 +499,5 @@ __all__ = [
     "upsert_url",
     "url_id_map",
     "visit_rows",
+    "visit_view_rows",
 ]

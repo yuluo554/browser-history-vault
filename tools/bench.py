@@ -42,6 +42,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -626,6 +627,801 @@ SUITE_RUNNERS["B1"] = run_suite_b1
 
 
 # --------------------------------------------------------------------------
+# B2 / B3 共用的取数面：把冻结 fixtures 归档成一份临时档案库
+# --------------------------------------------------------------------------
+
+def _build_fixture_archive(fixture_dir: Path, manifest: Dict[str, Any], target: Path) -> Path:
+    """三个来源归档进同一个临时库 → 367 条记录（与冻结导出同集）。
+
+    刻意**真跑归档链路**（而不是直接喂规范化导出）：检索与洞察的输入是"档案库"，
+    用导出文件当输入会让"档案库读出口"这一层完全不被测到。
+    """
+    config = _b1_config(manifest)
+    for index, (relative, browser) in enumerate(B1_SOURCES):
+        _b1_archive(
+            fixture_dir, relative, browser, target,
+            started_at_us=B1_STARTED_AT_US + index, config=config,
+        )
+    return target
+
+
+def _fixture_rows(archive_db: Path) -> List[Dict[str, Any]]:
+    """从归档库读回**可下钻**的行（与 `search` / `report` 用的是同一个 DAO）。"""
+    from browser_history_vault.storage import connect_readonly, visit_view_rows
+
+    connection = connect_readonly(archive_db)
+    try:
+        return visit_view_rows(connection)
+    finally:
+        connection.close()
+
+
+def _fixture_config(manifest: Dict[str, Any]):
+    """构造 `VaultConfig`：口径仍从**冻结台账**取（与 `config.example.json` 各一次生成）。"""
+    from browser_history_vault.config import parse_config
+
+    params = manifest["source_config"]["params"]
+    raw = {
+        "config_version": params["config_version"],
+        "session_gap_minutes": params["session_gap_minutes"],
+        "forgotten": dict(params["forgotten"]),
+        "private_domains": list(params["private_domains"]),
+        "sensitive_domains": list(params["sensitive_domains"]),
+        "timezone_utc_offset_minutes": params["timezone_utc_offset_minutes"],
+        "random_seed": params["random_seed"],
+        "search": dict(params["search"]),
+        "cluster": {
+            "min_df": int(params["cluster"]["min_df"]),
+            "max_features": 500,
+            "top_terms": 10,
+            "similarity_threshold": 0.35,
+        },
+        "report": {"top_n": 20, "weekday_start": str(params["report"]["weekday_start"])},
+    }
+    return parse_config(raw, "<manifest.source_config.params>")
+
+
+def _anchor_now_us(manifest: Dict[str, Any]) -> int:
+    """台账的 `anchor_local_date` 正午 → 纪元微秒（"今天"由数据下发，基准不读时钟）。"""
+    import datetime as _datetime
+
+    from browser_history_vault.timeutil import local_us_of_datetime
+
+    year, month, day = [int(part) for part in str(manifest["anchor_local_date"]).split("-")]
+    moment = _datetime.datetime(year, month, day, 12, 0, 0)
+    return local_us_of_datetime(moment, int(manifest["source_config"]["params"]["timezone_utc_offset_minutes"]))
+
+
+def _truth_bundle(fixture_dir: Path, kind: str) -> Dict[str, Any]:
+    return json.loads(
+        (fixture_dir / "assumptions" / ("%s.json" % kind)).read_text(encoding="utf-8")
+    )
+
+
+#: 主机形态的 token（用于"零出现"判据）。
+_HOST_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9.\-]*")
+
+
+def _leaked_hosts(payload: str, hosts: Sequence[str]) -> List[str]:
+    """在**文本里**找以主机身份出现的私密/敏感主机。
+
+    **判据是主机身份，不是子串**（K7）：`localhost.example.test` 里含 `localhost`，
+    但它是公开主机、必须出现——用 `host in payload` 会把它误判成泄漏。
+    这里先把文本切成人可读的 token，再按"等于该项或该项的子域"判定。
+    """
+    from browser_history_vault import privacy
+
+    tokens = set(_HOST_TOKEN_RE.findall(str(payload).lower()))
+    leaked = []
+    for host in hosts:
+        if any(privacy.host_matches_entry(token, host) for token in tokens):
+            leaked.append(host)
+    return sorted(leaked)
+
+
+# --------------------------------------------------------------------------
+# 套件 B2：查询确定性（排序键 / 分页 / CSV / 隐私）
+# --------------------------------------------------------------------------
+
+#: B2 用的确定性查询（不读时钟、不随机）：既有命中也有 0 命中的查询。
+B2_QUERIES: Tuple[str, ...] = ("示例文章", "sample page", "unique-path-marker", "文章示例")
+
+
+def _b2_visible(rows, manifest):
+    """过门禁后的可见行（与 CLI 走同一条单点：`privacy.keep_visible`）。"""
+    from browser_history_vault import privacy
+
+    config = _fixture_config(manifest)
+    return privacy.keep_visible(
+        rows, private_domains=config.private_domains, sensitive_domains=config.sensitive_domains
+    )
+
+
+def _b2_samples(fixture_dir: Path, rows, manifest: Dict[str, Any]) -> List[Check]:
+    """样本驱动：逐条跑冻结真值里的检索用例（含 2 条反例：必须 0 命中）。"""
+    from browser_history_vault.search import SearchQuery, search_rows
+
+    config = _fixture_config(manifest)
+    bundle = _truth_bundle(fixture_dir, "search")
+    problems: List[str] = []
+    checked = 0
+    for sample in bundle["samples"]:
+        query = str(sample["input"]["query"])
+        result = search_rows(
+            rows,
+            SearchQuery(text=query),
+            ngram_n=int(config.ngram_n),
+            private_domains=config.private_domains,
+            sensitive_domains=config.sensitive_domains,
+        )
+        got = sorted({hit.url for hit in result.hits})
+        expected = list(sample["expected"]["hits"])
+        checked += 1
+        if got != expected:
+            problems.append(
+                "%s：期望 %d 个 URL，实得 %d 个（%s）"
+                % (sample["id"], len(expected), len(got),
+                   "反例却命中了" if sample["counterexample"] else "集合不一致")
+            )
+    return [
+        Check(
+            "sample-search-hits",
+            not problems,
+            "；".join(problems[:3]) if problems
+            else "%d 条检索真值逐条一致（含 %d 条反例必须 0 命中）"
+            % (checked, sum(1 for s in bundle["samples"] if s["counterexample"])),
+        )
+    ]
+
+
+def _b2_rules(fixture_dir: Path, rows, manifest: Dict[str, Any]) -> List[Check]:
+    """规则驱动：不读真值库，专治"样本没覆盖的端点"（复跑 / 打乱输入 / 分页 / CSV / 隐私）。"""
+    import csv as _csv
+    import io
+
+    from browser_history_vault import privacy
+    from browser_history_vault.search import (
+        CSV_COLUMNS,
+        SearchQuery,
+        hits_to_csv_text,
+        search_rows,
+    )
+
+    config = _fixture_config(manifest)
+    checks: List[Check] = []
+    # 规则层**刻意用一个不带文本过滤的查询**（= 全部可见记录）：这样结果集里
+    # 一定同时含"同一微秒的并列访问"（次排序键才真的被考验）、含私密/敏感主机
+    # （隐私门禁才真的被考验）——用一个恰好避开这些端点的查询会让整段门禁空转。
+    query = SearchQuery()
+
+    def run(source_rows):
+        return search_rows(
+            source_rows,
+            query,
+            ngram_n=int(config.ngram_n),
+            private_domains=config.private_domains,
+            sensitive_domains=config.sensitive_domains,
+        )
+
+    baseline = run(rows)
+    documents = [
+        json.dumps(
+            baseline.to_document(
+                offset_minutes=int(config.timezone_utc_offset_minutes),
+                private_domains=config.private_domains,
+                sensitive_domains=config.sensitive_domains,
+            ),
+            sort_keys=True,
+            ensure_ascii=False,
+        )
+        for _ in range(2)
+    ]
+    checks.append(
+        Check(
+            "rule-repeatable",
+            documents[0] == documents[1] and bool(baseline.hits),
+            "同一查询两次执行的机读结果%s（命中 %d 条）"
+            % ("逐字节一致" if documents[0] == documents[1] else "不一致", len(baseline.hits)),
+        )
+    )
+
+    # 打乱输入顺序：结果必须与输入物理序无关（次排序键接受考验）
+    permutations = {
+        "reversed": list(reversed(rows)),
+        "by-url-desc": sorted(rows, key=lambda row: str(row["url"]), reverse=True),
+    }
+    shuffle_problems = [
+        name for name, source in permutations.items()
+        if [hit.visit_id for hit in run(source).hits] != [hit.visit_id for hit in baseline.hits]
+    ]
+    checks.append(
+        Check(
+            "rule-shuffled-input",
+            not shuffle_problems and bool(baseline.hits),
+            "输入按 %s 重排后结果%s"
+            % ("、".join(permutations) or "-",
+               "完全一致" if not shuffle_problems else "发生变化：%s" % shuffle_problems),
+        )
+    )
+
+    ordered = baseline.hits
+    order_ok = ordered == tuple(
+        sorted(ordered, key=lambda hit: (-hit.visit_time_us, hit.visit_id))
+    )
+    checks.append(
+        Check(
+            "rule-order-explicit",
+            order_ok,
+            "结果序 = 访问时间降序 + visit_id 升序（显式次排序键）%s，共 %d 条"
+            % ("成立" if order_ok else "**不成立**", len(ordered)),
+        )
+    )
+
+    # 分页：逐页取出的并集必须等于全量结果，且页间不重叠、页内保序
+    limit = 50
+    pages: List[Any] = []
+    offset = 0
+    while True:
+        page = search_rows(
+            rows,
+            SearchQuery(limit=limit, offset=offset),
+            ngram_n=int(config.ngram_n),
+            private_domains=config.private_domains,
+            sensitive_domains=config.sensitive_domains,
+        )
+        if not page.hits:
+            break
+        pages.append(page)
+        offset += limit
+    paged_ids = [hit.visit_id for page in pages for hit in page.hits]
+    full_ids = [hit.visit_id for hit in baseline.hits]
+    checks.append(
+        Check(
+            "rule-paging-partition",
+            paged_ids == full_ids and len(pages) >= 2,
+            "%d 页（每页 %d）拼接%s全量 %d 条"
+            % (len(pages), limit, "等于" if paged_ids == full_ids else "**不等于**", len(full_ids)),
+        )
+    )
+
+    # CSV：列序固定 + 用 csv 模块读回逐条比对
+    csv_text = hits_to_csv_text(
+        baseline.hits,
+        offset_minutes=int(config.timezone_utc_offset_minutes),
+        private_domains=config.private_domains,
+        sensitive_domains=config.sensitive_domains,
+    )
+    reader = _csv.reader(io.StringIO(csv_text, newline=""))
+    csv_rows = list(reader)
+    header = csv_rows[0] if csv_rows else []
+    body = csv_rows[1:]
+    ids_match = [row[0] for row in body] == [str(hit.visit_id) for hit in baseline.hits]
+    checks.append(
+        Check(
+            "rule-csv-columns",
+            header == list(CSV_COLUMNS) and len(body) == len(baseline.hits) and ids_match,
+            "CSV 列序 %s，读回 %d 行，visit_id 序列%s"
+            % ("固定" if header == list(CSV_COLUMNS) else "漂移：%s" % header, len(body),
+               "一致" if ids_match else "不一致"),
+        )
+    )
+
+    # 隐私：私密主机零出现；敏感主机打码且原样不出现
+    private_leaks = sorted(
+        {hit.host for hit in baseline.hits
+         if privacy.classify_host(hit.host, config.private_domains, config.sensitive_domains)
+         == privacy.PRIVATE}
+    )
+    sensitive_hosts = sorted(
+        {hit.host for hit in baseline.hits
+         if privacy.classify_host(hit.host, config.private_domains, config.sensitive_domains)
+         == privacy.SENSITIVE}
+    )
+    payload = json.dumps(
+        baseline.to_document(
+            offset_minutes=int(config.timezone_utc_offset_minutes),
+            private_domains=config.private_domains,
+            sensitive_domains=config.sensitive_domains,
+        ),
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+    text_leaks = _leaked_hosts(payload, private_leaks + sensitive_hosts)
+    checks.append(
+        Check(
+            "rule-privacy-zero-appearance",
+            not private_leaks and not text_leaks and bool(sensitive_hosts),
+            "私密主机 %d 个%s；敏感主机 %d 个，未打码的 %d 个"
+            % (len(private_leaks), "零出现" if not private_leaks else "**进了结果集**：%s" % private_leaks[:3],
+               len(sensitive_hosts), len(text_leaks)),
+        )
+    )
+    return checks
+
+
+def run_suite_b2(fixture_dir: Path, manifest: Dict[str, Any]) -> List[Check]:
+    """查询确定性：样本驱动（冻结真值）+ 规则驱动（复跑/打乱/分页/CSV/隐私）。"""
+    checks: List[Check] = []
+    try:
+        with tempfile.TemporaryDirectory(prefix="bhvault-bench-b2-") as tmp:
+            archive_db = _build_fixture_archive(fixture_dir, manifest, Path(tmp) / "archive.db")
+            rows = _fixture_rows(archive_db)
+            canonical = reference.load_canonical(fixture_dir / "canonical" / "visits.jsonl")
+            projected = [
+                {field: row[field] for field in reference.CANONICAL_FIELDS} for row in rows
+            ]
+            checks.append(
+                Check(
+                    "upstream-rows-match-canonical",
+                    projected == canonical,
+                    "归档库读回的 %d 行与冻结规范化导出%s"
+                    % (len(rows), "逐字段一致" if projected == canonical else "**不一致**"),
+                )
+            )
+            checks.extend(_guard("samples", lambda: _b2_samples(fixture_dir, rows, manifest)))
+            checks.extend(_guard("rules", lambda: _b2_rules(fixture_dir, rows, manifest)))
+    except Exception as exc:  # noqa: BLE001 - 套件要能报告"哪一段坏了"
+        checks.append(Check("b2-error", False, "B2 未能跑完：%s" % exc))
+        return checks
+    finally:
+        _cleanup_bench_snapshots()
+    return checks
+
+
+SUITE_RUNNERS["B2"] = run_suite_b2
+
+
+# --------------------------------------------------------------------------
+# 套件 B3：洞察口径（会话 / 遗忘 / 热力 / 集中度）
+# --------------------------------------------------------------------------
+
+def _b3_samples(fixture_dir: Path, rows, manifest: Dict[str, Any]) -> List[Check]:
+    """样本驱动：四类真值逐条点名（会话 8 / 遗忘 16 / 热力 8 / 集中度 4）。"""
+    from browser_history_vault import insight, sessions
+
+    config = _fixture_config(manifest)
+    visible = _b2_visible(rows, manifest)
+    offset = int(config.timezone_utc_offset_minutes)
+    checks: List[Check] = []
+
+    # 会话：真值样本用 url 锚点定位（不是用实现产出的 session_id）
+    bundle = _truth_bundle(fixture_dir, "sessions")
+    problems: List[str] = []
+    for sample in bundle["samples"]:
+        picked = sessions.sessions_containing(
+            _prod_split(visible, int(config.session_gap_minutes)),
+            sample["input"]["urls"],
+        )
+        got = sorted(session.size for session in picked)
+        if got != sorted(sample["expected"]["session_sizes"]):
+            problems.append("%s：期望 %s，实得 %s"
+                            % (sample["id"], sample["expected"]["session_sizes"], got))
+    block_sessions = insight.sessions_block(
+        visible, gap_minutes=int(config.session_gap_minutes), top_n=int(config.report_top_n)
+    )
+    counts_agree = block_sessions["session_count"] == len(
+        _prod_split(visible, int(config.session_gap_minutes))
+    )
+    checks.append(
+        Check(
+            "sample-sessions",
+            not problems and counts_agree,
+            "；".join(problems[:3]) if problems
+            else "%d 条会话真值逐条一致（含 %d 条边界反例）；报告区块会话数 %d 与切分实现一致"
+            % (len(bundle["samples"]), sum(1 for s in bundle["samples"] if s["counterexample"]),
+               block_sessions["session_count"]),
+        )
+    )
+
+    # 遗忘：逐条 forgotten + 未满足条件名
+    bundle = _truth_bundle(fixture_dir, "forgotten")
+    problems = []
+    for sample in bundle["samples"]:
+        state = insight.forgotten_state(
+            rows,
+            sample["input"]["url"],
+            days_threshold=int(config.forgotten_days_threshold),
+            min_visits=int(config.forgotten_min_visits),
+            min_distinct_days=int(config.forgotten_min_distinct_days),
+            today_local_date=manifest["anchor_local_date"],
+            offset_minutes=offset,
+            private_domains=config.private_domains,
+            sensitive_domains=config.sensitive_domains,
+        )
+        if state["forgotten"] != sample["expected"]["forgotten"] or (
+            state["failed_conditions"] != sample["expected"]["failed_conditions"]
+        ):
+            problems.append(
+                "%s：期望 %s/%s，实得 %s/%s"
+                % (sample["id"], sample["expected"]["forgotten"],
+                   sample["expected"]["failed_conditions"], state["forgotten"],
+                   state["failed_conditions"])
+            )
+    checks.append(
+        Check(
+            "sample-forgotten",
+            not problems,
+            "；".join(problems[:3]) if problems
+            else "%d 条遗忘真值逐条一致（含 %d 条反例；错误类型逐条核对）"
+            % (len(bundle["samples"]), sum(1 for s in bundle["samples"] if s["counterexample"])),
+        )
+    )
+
+    # 遗忘：全库命中集合 + 集合划分恒等式（命中 ∪ 私密/敏感 ∪ 零命中 == 全部 URL）
+    block = insight.forgotten_block(
+        rows,
+        days_threshold=int(config.forgotten_days_threshold),
+        min_visits=int(config.forgotten_min_visits),
+        min_distinct_days=int(config.forgotten_min_distinct_days),
+        today_local_date=manifest["anchor_local_date"],
+        offset_minutes=offset,
+        private_domains=config.private_domains,
+        sensitive_domains=config.sensitive_domains,
+    )
+    hits = [item["url"] for item in block["items"]]
+    all_urls = sorted({str(row["url"]) for row in rows})
+    from browser_history_vault.reference import host_of as _ref_host_of
+    from browser_history_vault.reference import partition_is_complete as _partition_ok
+
+    excluded = sorted(
+        url for url in all_urls
+        if _kind_of(_ref_host_of(url), config) in ("private", "sensitive")
+    )
+    rest = [url for url in all_urls if url not in set(hits) and url not in set(excluded)]
+    expected_hits = list(_truth_bundle(fixture_dir, "forgotten")["expected_hits_all_urls"])
+    partition = _truth_bundle(fixture_dir, "forgotten")["partition"]
+    partition_ok = _partition_ok(hits, excluded, rest, all_urls)
+    checks.append(
+        Check(
+            "sample-forgotten-hits-and-partition",
+            sorted(hits) == sorted(expected_hits)
+            and partition_ok
+            and (len(hits), len(excluded), len(rest))
+            == (partition["matched"], partition["excluded_private_or_sensitive"], partition["no_match"])
+            and len(hits) == partition["matched"],
+            "命中 %d 项 / 私密或敏感 %d 项 / 零命中 %d 项（合计 %d 个 URL）；"
+            "命中集合与台账%s，集合划分%s"
+            % (len(hits), len(excluded), len(rest), len(all_urls),
+               "一致" if sorted(hits) == sorted(expected_hits) else "**不一致**",
+               "成立" if partition_ok else "**不成立**"),
+        )
+    )
+
+    # 热力：逐样本 + 全样本汇总
+    bundle = _truth_bundle(fixture_dir, "heatmap")
+    problems = []
+    for sample in bundle["samples"]:
+        wanted = set(sample["input"]["urls"])
+        subset = [row for row in rows if str(row["url"]) in wanted]
+        got = insight.heatmap_counts(
+            subset, offset_minutes=offset, weekday_start=str(config.report_weekday_start)
+        )
+        if got != sample["expected"]["buckets"]:
+            problems.append("%s：期望 %s，实得 %s" % (sample["id"], sample["expected"]["buckets"], got))
+    rollup_urls = {url for sample in bundle["samples"] for url in sample["input"]["urls"]}
+    rollup_rows = [row for row in rows if str(row["url"]) in rollup_urls]
+    rollup = insight.heatmap_counts(
+        rollup_rows, offset_minutes=offset, weekday_start=str(config.report_weekday_start)
+    )
+    rollup_expected = bundle["expected_rollup"]
+    checks.append(
+        Check(
+            "sample-heatmap",
+            not problems and rollup == rollup_expected["buckets"]
+            and sum(rollup.values()) == int(rollup_expected["visits"]),
+            "；".join(problems[:2]) if problems
+            else "%d 条热力真值逐条一致；汇总 %d 桶 / %d 条记录与台账一致"
+            % (len(bundle["samples"]), len(rollup), sum(rollup.values())),
+        )
+    )
+
+    # 集中度：分子分母 + 并列次序 + 私密既不进榜也不进分母
+    bundle = _truth_bundle(fixture_dir, "domains")
+    ranking = {item["domain"]: item["visits"] for item in insight.domain_ranking(visible)}
+    order = [item["domain"] for item in insight.domain_ranking(visible)]
+    problems = []
+    for sample in bundle["samples"]:
+        payload = sample["input"]
+        if "domain" in payload:
+            if ranking.get(payload["domain"], 0) != sample["expected"]["numerator"]:
+                problems.append("%s 分子" % sample["id"])
+            if len(visible) != sample["expected"]["denominator"]:
+                problems.append("%s 分母" % sample["id"])
+        if "candidates" in payload:
+            wanted = set(payload["candidates"])
+            if [host for host in order if host in wanted] != sample["expected"]["candidate_order"]:
+                problems.append("%s 次序" % sample["id"])
+        if "private_hosts" in payload:
+            leaked = [host for host in payload["private_hosts"] if host in ranking]
+            if leaked:
+                problems.append("%s 私密进榜：%s" % (sample["id"], leaked))
+    denominator = len(visible)
+    checks.append(
+        Check(
+            "sample-domains",
+            not problems and denominator == int(bundle["expected_denominator"]),
+            "；".join(problems[:3]) if problems
+            else "%d 条集中度真值逐条一致（分母 %d = 非私密记录数）"
+            % (len(bundle["samples"]), denominator),
+        )
+    )
+    return checks
+
+
+def _prod_split(rowset: Sequence[Dict[str, Any]], gap_minutes: int):
+    """**报告侧的会话切分消费点**：走 `insight.split_sessions`（模块③真正用的那个引用）。
+
+    刻意不用 `sessions.split_sessions`：探活打在消费处才生效（`plan/05` §7）——
+    直接调定义模块会让"把切分条件写错"这类缺陷从门禁底下溜过去。
+    同时这条也守住了 K13：报告层不许出现第二份会话切分。
+    """
+    from browser_history_vault import insight
+
+    return insight.split_sessions(rowset, gap_minutes)
+
+
+def _kind_of(host: str, config) -> str:
+    from browser_history_vault import privacy
+
+    return privacy.classify_host(host, config.private_domains, config.sensitive_domains)
+
+
+def _b3_rules(fixture_dir: Path, rows, manifest: Dict[str, Any]) -> List[Check]:
+    """规则驱动：边界推导（间隔 ±1 秒 / 天数 ±1 / 空分母与单条）+ 与参照实现对撞 + 下钻。"""
+    import datetime as _datetime
+
+    from browser_history_vault import insight, sessions
+    from browser_history_vault.reference import (
+        domains_denominator,
+        forgotten_hit_urls,
+        heatmap_buckets,
+        split_sessions as reference_split_sessions,
+    )
+    from browser_history_vault.timeutil import US_PER_SECOND, local_us_of_datetime
+
+    config = _fixture_config(manifest)
+    offset = int(config.timezone_utc_offset_minutes)
+    gap_minutes = int(config.session_gap_minutes)
+    checks: List[Check] = []
+
+    base_us = local_us_of_datetime(_datetime.datetime(2026, 6, 1, 10, 0, 0), offset)
+
+    def row(url: str, us: int, visit_id: int, host: str, source: str = "chrome") -> Dict[str, Any]:
+        return {
+            "visit_id": visit_id, "url_id": visit_id, "url": url, "title": "planted",
+            "host": host, "visit_time_us": us, "source_browser": source,
+            "source_profile": "Default", "transition": 0, "visit_duration_us": 0,
+        }
+
+    # 1) 会话边界三态：恰好等于间隔 / 少 1 秒 / 多 1 秒
+    boundary = {
+        "exact": gap_minutes * 60,
+        "minus": gap_minutes * 60 - 1,
+        "plus": gap_minutes * 60 + 1,
+    }
+    measured = {}
+    for name, seconds in boundary.items():
+        probe = [row("https://rule.example.test/a", base_us, 1, "rule.example.test"),
+                 row("https://rule.example.test/b", base_us + seconds * US_PER_SECOND, 2, "rule.example.test")]
+        measured[name] = len(_prod_split(probe, gap_minutes))
+    checks.append(
+        Check(
+            "rule-session-gap-boundary",
+            measured == {"exact": 1, "minus": 1, "plus": 2},
+            "间隔 少1秒/恰好/多1秒 → 会话数 %d/%d/%d（期望 1/1/2）"
+            % (measured["minus"], measured["exact"], measured["plus"]),
+        )
+    )
+
+    # 2) 遗忘的天数边界：阈值 -1 / 恰好 / +1 天
+    #    三次访问跨 3 个本地日（满足 ②③），**最后一次**落在距今天 N 天处（专测 ① 的严格大于）。
+    threshold = int(config.forgotten_days_threshold)
+    today = _datetime.date(2026, 6, 1)
+    days_results = {}
+    for name, days_ago in (("minus-one", threshold - 1), ("exact", threshold), ("plus-one", threshold + 1)):
+        last_us = local_us_of_datetime(
+            _datetime.datetime.combine(today - _datetime.timedelta(days=days_ago), _datetime.time(9, 0)), offset
+        )
+        day_us = 24 * 3600 * US_PER_SECOND
+        probe = [
+            row("https://rule-forgotten.example.test/x", last_us - 2 * day_us, 1, "rule-forgotten.example.test"),
+            row("https://rule-forgotten.example.test/x", last_us - day_us, 2, "rule-forgotten.example.test"),
+            row("https://rule-forgotten.example.test/x", last_us, 3, "rule-forgotten.example.test"),
+        ]
+        days_results[name] = bool(
+            insight.forgotten_state(
+                probe,
+                "https://rule-forgotten.example.test/x",
+                days_threshold=threshold,
+                min_visits=int(config.forgotten_min_visits),
+                min_distinct_days=int(config.forgotten_min_distinct_days),
+                today_local_date=today,
+                offset_minutes=offset,
+                private_domains=config.private_domains,
+                sensitive_domains=config.sensitive_domains,
+            )["forgotten"]
+        )
+    checks.append(
+        Check(
+            "rule-forgotten-days-boundary",
+            days_results == {"minus-one": False, "exact": False, "plus-one": True},
+            "距今 阈值-1/恰好/阈值+1 天 → 命中 %s/%s/%s（期望 否/否/是）"
+            % (days_results["minus-one"], days_results["exact"], days_results["plus-one"]),
+        )
+    )
+
+    # 3) 集中度的空分母与单条分母（0/0 不得冒充通过，也不得除零崩掉）
+    empty = insight.concentration_block(
+        [], top_n=5, private_domains=config.private_domains, sensitive_domains=config.sensitive_domains
+    )
+    single_rows = [row("https://rule.example.test/only", base_us, 1, "rule.example.test")]
+    single = insight.concentration_block(
+        single_rows, top_n=5, private_domains=config.private_domains,
+        sensitive_domains=config.sensitive_domains,
+    )
+    checks.append(
+        Check(
+            "rule-domains-empty-and-single",
+            empty["denominator_records"] == 0 and empty["items"] == []
+            and single["denominator_records"] == 1 and single["items"][0]["share_percent_text"] == "100.00",
+            "空分母 → 分母 0 / 榜单 0 项；单条分母 → 1、占比 %s"
+            % (single["items"][0]["share_percent_text"] if single["items"] else "n/a"),
+        )
+    )
+
+    # 4) 与参照实现（零共享的另一份）在**全量数据**上逐口径对撞
+    visible = _b2_visible(rows, manifest)
+    prod_sessions = _prod_split(visible, gap_minutes)
+    ref_sessions = reference_split_sessions(visible, gap_minutes)
+    parity_problems: List[str] = []
+    if sorted(session.size for session in prod_sessions) != sorted(
+        int(item["size"]) for item in ref_sessions
+    ):
+        parity_problems.append("会话长度分布")
+    if [(s.session_id, s.start_us, s.source_browser) for s in prod_sessions] != [
+        (int(item["session_id"]), int(item["start_us"]), str(item["source_browser"])) for item in ref_sessions
+    ]:
+        parity_problems.append("会话序号/起点")
+    if insight.heatmap_counts(
+        rows, offset_minutes=offset, weekday_start=str(config.report_weekday_start)
+    ) != heatmap_buckets(
+        rows, offset_minutes=offset, weekday_start=str(config.report_weekday_start)
+    ):
+        parity_problems.append("热力分桶")
+    if [
+        (item["domain"], item["visits"]) for item in insight.domain_ranking(visible)
+    ] != [tuple(pair) for pair in _reference_domain_order(rows, config)]:
+        parity_problems.append("域名排行")
+    if len(visible) != domains_denominator(
+        rows, private_domains=config.private_domains, sensitive_domains=config.sensitive_domains
+    ):
+        parity_problems.append("集中度分母")
+    prod_hits = [item["url"] for item in insight.forgotten_block(
+        rows, days_threshold=int(config.forgotten_days_threshold),
+        min_visits=int(config.forgotten_min_visits),
+        min_distinct_days=int(config.forgotten_min_distinct_days),
+        today_local_date=manifest["anchor_local_date"], offset_minutes=offset,
+        private_domains=config.private_domains, sensitive_domains=config.sensitive_domains,
+    )["items"]]
+    if sorted(prod_hits) != forgotten_hit_urls(
+        rows, days_threshold=int(config.forgotten_days_threshold),
+        min_visits=int(config.forgotten_min_visits),
+        min_distinct_days=int(config.forgotten_min_distinct_days),
+        today_local_date=manifest["anchor_local_date"], offset_minutes=offset,
+        private_domains=config.private_domains, sensitive_domains=config.sensitive_domains,
+    ):
+        parity_problems.append("遗忘命中集合")
+    checks.append(
+        Check(
+            "rule-parity-with-reference",
+            not parity_problems,
+            "生产实现与参照实现在 %d 条记录上逐口径一致（会话/热力/域名/分母/遗忘）"
+            % len(rows) if not parity_problems
+            else "口径分叉：%s" % parity_problems,
+        )
+    )
+
+    # 5) 会话统计只吃可见行：私密记录存在时，"可见口径"必须小于"全量口径"
+    all_sessions = len(_prod_split(rows, gap_minutes))
+    visible_sessions = len(prod_sessions)
+    from browser_history_vault import privacy
+
+    private_records = sum(
+        1 for row in rows
+        if privacy.classify_host(row["host"], config.private_domains, config.sensitive_domains)
+        == privacy.PRIVATE
+    )
+    checks.append(
+        Check(
+            "rule-aggregates-exclude-private",
+            private_records == 0 or visible_sessions < all_sessions,
+            "全量口径 %d 个会话 / 可见口径 %d 个（私密记录 %d 条：连统计都不进）"
+            % (all_sessions, visible_sessions, private_records),
+        )
+    )
+
+    # 6) 下钻：报告里出现的每个 visit_id 都必须能在库里解析到行，且计数对得上
+    document = insight.build_report(
+        rows,
+        config=_fixture_config(manifest),
+        now_us=_anchor_now_us(manifest),
+        archive_db="<bench>",
+    )
+    by_id = {int(row["visit_id"]): row for row in rows}
+    problems = []
+    for item in document["top_urls"]["items"]:
+        resolved = [by_id.get(vid) for vid in item["visit_ids"]]
+        if any(entry is None for entry in resolved) or len(resolved) != item["visits"]:
+            problems.append("top_urls:%s" % item["url"])
+    for item in document["concentration"]["items"]:
+        resolved = [by_id.get(vid) for vid in item["visit_ids"]]
+        if any(entry is None for entry in resolved) or len(resolved) != item["visits"]:
+            problems.append("concentration:%s" % item["domain"])
+    for item in document["forgotten"]["items"]:
+        resolved = [by_id.get(vid) for vid in item["visit_ids"]]
+        if any(entry is None for entry in resolved) or len(resolved) != item["visits"]:
+            problems.append("forgotten:%s" % item["url"])
+    for item in document["sessions"]["largest"]:
+        resolved = [by_id.get(vid) for vid in item["visit_ids"]]
+        if any(entry is None for entry in resolved) or len(resolved) != item["size"]:
+            problems.append("sessions:#%s" % item["session_id"])
+    checks.append(
+        Check(
+            "rule-drilldown-resolvable",
+            not problems,
+            "；".join(problems[:3]) if problems
+            else "榜单/集中度/遗忘/最长会话的 visit_id 全部可解析，行数逐项对账",
+        )
+    )
+
+    # 7) 报告输出面零私密、敏感打码（"所有输出都过隐私门禁"的机器可证形态）
+    payload = json.dumps(document, sort_keys=True, ensure_ascii=False)
+    private_hosts = sorted({str(row["host"]) for row in rows
+                            if _kind_of(str(row["host"]), config) == "private"})
+    sensitive_hosts = sorted({str(row["host"]) for row in rows
+                              if _kind_of(str(row["host"]), config) == "sensitive"})
+    leaks = _leaked_hosts(payload, private_hosts + sensitive_hosts)
+    checks.append(
+        Check(
+            "rule-report-privacy",
+            not leaks and bool(private_hosts) and bool(sensitive_hosts),
+            "报告机读文本中私密主机 %d 个 / 敏感主机 %d 个，以主机身份出现的 %d 个%s"
+            % (len(private_hosts), len(sensitive_hosts), len(leaks),
+               "" if not leaks else "：%s" % leaks[:3]),
+        )
+    )
+    return checks
+
+
+def _reference_domain_order(rows, config):
+    from browser_history_vault.reference import domain_order
+
+    return domain_order(
+        rows, private_domains=config.private_domains, sensitive_domains=config.sensitive_domains
+    )
+
+
+def run_suite_b3(fixture_dir: Path, manifest: Dict[str, Any]) -> List[Check]:
+    """洞察口径：样本驱动（会话/遗忘/热力/集中度）+ 规则驱动（边界推导 / 参照对撞 / 下钻）。"""
+    checks: List[Check] = []
+    try:
+        with tempfile.TemporaryDirectory(prefix="bhvault-bench-b3-") as tmp:
+            archive_db = _build_fixture_archive(fixture_dir, manifest, Path(tmp) / "archive.db")
+            rows = _fixture_rows(archive_db)
+            checks.extend(_guard("samples", lambda: _b3_samples(fixture_dir, rows, manifest)))
+            checks.extend(_guard("rules", lambda: _b3_rules(fixture_dir, rows, manifest)))
+    except Exception as exc:  # noqa: BLE001
+        checks.append(Check("b3-error", False, "B3 未能跑完：%s" % exc))
+        return checks
+    finally:
+        _cleanup_bench_snapshots()
+    return checks
+
+
+SUITE_RUNNERS["B3"] = run_suite_b3
+
+
+# --------------------------------------------------------------------------
 # 编排
 # --------------------------------------------------------------------------
 
@@ -869,16 +1665,219 @@ def run_probe_b1(fixture_dir: Path, manifest: Dict[str, Any]) -> List[Check]:
     return results
 
 
+#: B2 的探活缺陷（**打在被测实现的消费处**）。
+#:
+#: | 注入 | 对应真实缺陷 |
+#: |---|---|
+#: | 检索写成"任一 n-gram 命中即算" | 把包含匹配读成并集 → 反例查询开始误报 |
+#: | 次排序键取反 | 分页在同一微秒的并列里漏一条/多一条（稳定排序掩盖不了） |
+#: | 绕过隐私门禁 | `keep_visible` 被短路 → 私密主机直接进结果集 |
+B2_PROBE_NAMES: Tuple[str, ...] = (
+    "search-any-gram-matches",
+    "search-secondary-key-reversed",
+    "search-privacy-gate-bypassed",
+)
+
+#: B3 的探活缺陷（同上，四条各打一条口径）。
+B3_PROBE_NAMES: Tuple[str, ...] = (
+    "session-boundary-inclusive",
+    "forgotten-threshold-inclusive",
+    "heatmap-utc-buckets",
+    "report-privacy-gate-bypassed",
+)
+
+
+def _b2_probe_mutation(name: str) -> Tuple[str, Callable[[], None], Callable[[], None]]:
+    from browser_history_vault import privacy as privacy_module
+    from browser_history_vault import search as search_module
+
+    if name == "search-any-gram-matches":
+        original = search_module.text_matches
+
+        def inject() -> None:
+            def any_gram(query, target, n, *, casefold=True):
+                if casefold:
+                    query, target = query.casefold(), target.casefold()
+                # 缺陷形态：把"全部 n-gram 都在"读成"任一 n-gram 命中即算"
+                return bool(search_module.char_ngrams(query, n) & search_module.char_ngrams(target, n))
+
+            search_module.text_matches = any_gram  # type: ignore[assignment]
+
+        def restore() -> None:
+            search_module.text_matches = original  # type: ignore[assignment]
+
+        return "检索写成『任一 n-gram 命中即算』", inject, restore
+
+    if name == "search-secondary-key-reversed":
+        original = search_module._key_for
+
+        def inject() -> None:
+            search_module._key_for = lambda order: (lambda hit: (-hit.visit_time_us, -hit.visit_id))  # type: ignore[assignment]
+
+        def restore() -> None:
+            search_module._key_for = original  # type: ignore[assignment]
+
+        return "次排序键取反（并列访问的次序被颠倒）", inject, restore
+
+    if name == "search-privacy-gate-bypassed":
+        original = privacy_module.keep_visible
+
+        def inject() -> None:
+            privacy_module.keep_visible = lambda rows, **kwargs: list(rows)  # type: ignore[assignment]
+
+        def restore() -> None:
+            privacy_module.keep_visible = original  # type: ignore[assignment]
+
+        return "隐私门禁被短路（私密主机直接进结果集）", inject, restore
+
+    raise BenchError("未登记的 B2 探活项：%s" % name)
+
+
+def _b3_probe_mutation(name: str) -> Tuple[str, Callable[[], None], Callable[[], None]]:
+    from browser_history_vault import insight as insight_module
+    from browser_history_vault import privacy as privacy_module
+
+    if name == "session-boundary-inclusive":
+        original = insight_module.split_sessions
+
+        def inclusive_split(rows, gap_minutes):
+            """把"严格大于才切分"写成"大于等于才切分"（探活用的变异体）。"""
+            from browser_history_vault.sessions import Session, SessionStep, SessionError
+            from browser_history_vault.timeutil import US_PER_MINUTE
+
+            gap = int(gap_minutes)
+            if gap < 1:
+                raise SessionError("gap-range", "会话间隔必须是正整数分钟")
+            gap_us = gap * US_PER_MINUTE
+            grouped = {}
+            for row in rows:
+                step = SessionStep(
+                    visit_id=int(row["visit_id"]), url=str(row["url"]),
+                    visit_time_us=int(row["visit_time_us"]),
+                    source_browser=str(row["source_browser"]),
+                    source_profile=str(row["source_profile"]),
+                )
+                grouped.setdefault((step.source_browser, step.source_profile), []).append(step)
+            collected = []
+            for source_key in sorted(grouped):
+                ordered = sorted(
+                    grouped[source_key], key=lambda step: (step.visit_time_us, step.url)
+                )
+                current = []
+                previous = None
+                for step in ordered:
+                    if previous is not None and step.visit_time_us - previous >= gap_us:
+                        collected.append((source_key, tuple(current)))
+                        current = []
+                    current.append(step)
+                    previous = step.visit_time_us
+                if current:
+                    collected.append((source_key, tuple(current)))
+            collected.sort(key=lambda item: (item[1][0].visit_time_us, item[0][0], item[0][1]))
+            return tuple(
+                Session(session_id=index, source_browser=key[0], source_profile=key[1], steps=steps)
+                for index, (key, steps) in enumerate(collected, 1)
+            )
+
+        def inject() -> None:
+            insight_module.split_sessions = inclusive_split  # type: ignore[assignment]
+
+        def restore() -> None:
+            insight_module.split_sessions = original  # type: ignore[assignment]
+
+        return "会话切分把『严格大于』写成『大于等于』", inject, restore
+
+    if name == "forgotten-threshold-inclusive":
+        original = insight_module.forgotten_state
+
+        def inject() -> None:
+            def inclusive(rows, url, **kwargs):
+                # days_ago >= T  ⇔  用 T-1 走原来的 days_ago > T'
+                kwargs["days_threshold"] = int(kwargs["days_threshold"]) - 1
+                return original(rows, url, **kwargs)
+
+            insight_module.forgotten_state = inclusive  # type: ignore[assignment]
+
+        def restore() -> None:
+            insight_module.forgotten_state = original  # type: ignore[assignment]
+
+        return "遗忘判定把『距今严格大于阈值』写成『大于等于』", inject, restore
+
+    if name == "heatmap-utc-buckets":
+        original = insight_module.heatmap_counts
+
+        def inject() -> None:
+            def utc_buckets(rows, *, offset_minutes, weekday_start):
+                return original(rows, offset_minutes=0, weekday_start=weekday_start)
+
+            insight_module.heatmap_counts = utc_buckets  # type: ignore[assignment]
+
+        def restore() -> None:
+            insight_module.heatmap_counts = original  # type: ignore[assignment]
+
+        return "热力改用 UTC 分桶（丢掉配置的本地偏移）", inject, restore
+
+    if name == "report-privacy-gate-bypassed":
+        original = privacy_module.keep_visible
+
+        def inject() -> None:
+            privacy_module.keep_visible = lambda rows, **kwargs: list(rows)  # type: ignore[assignment]
+
+        def restore() -> None:
+            privacy_module.keep_visible = original  # type: ignore[assignment]
+
+        return "报告绕过隐私门禁（私密记录进了聚合）", inject, restore
+
+    raise BenchError("未登记的 B3 探活项：%s" % name)
+
+
+def _run_probe_impl(
+    names: Sequence[str],
+    mutate: Callable[[str], Tuple[str, Callable[[], None], Callable[[], None]]],
+    suite_runner: Callable[[Path, Dict[str, Any]], List[Check]],
+    fixture_dir: Path,
+    manifest: Dict[str, Any],
+) -> List[Check]:
+    """逐条注入 → 目标套件**必须**报未达标；注入后无论如何都在 `finally` 里还原。"""
+    results: List[Check] = []
+    for name in names:
+        description, inject, restore = mutate(name)
+        try:
+            inject()
+            try:
+                checks = suite_runner(fixture_dir, manifest)
+            finally:
+                restore()
+        except BenchError as exc:
+            results.append(Check("probe-%s" % name, False, "注入失败：%s" % exc))
+            continue
+        except Exception as exc:  # noqa: BLE001 - 探活失败要报出来，不能崩掉基准
+            results.append(Check("probe-%s" % name, False, "注入后基准崩溃：%s" % exc))
+            continue
+        failed = [check.code for check in checks if not check.ok]
+        results.append(
+            Check(
+                "probe-%s" % name,
+                bool(failed),
+                "%s → %s" % (
+                    description,
+                    "基准报未达标（%s）" % ", ".join(failed[:3]) if failed else "基准仍报达标（探活失效）",
+                ),
+            )
+        )
+    return results
+
+
 def run_probe(suite_ids: Sequence[str], fixture_dir: Path, manifest: Dict[str, Any],
               registry: Optional[Dict[str, Any]] = None) -> List[Check]:
     """逐条注入缺陷（从盘上实算值派生），要求基准**必须**报未达标。
 
     B0 的探活打在**数据**上（取反真值、删导出、抬门槛、删产物）；
-    B1 的探活打在**实现**上（见 `run_probe_b1`）。两类都要有：只打数据会漏掉
+    B1/B2/B3 的探活打在**实现**上（见各自的 `run_probe_bN`）。两类都要有：只打数据会漏掉
     "代码写错但数据没动"的形态，只打实现会漏掉"数据被改但代码照跑"的形态。
 
     **每条探活只跑它针对的那一个套件**（B0 的数据变异会删掉 assumptions，
-    B1 读不到真值就会崩——那不是"检出"，而是"探活自己把基准搞坏了"）。
+    别的套件读不到真值就会崩——那不是"检出"，而是"探活自己把基准搞坏了"）。
     """
     checks: List[Check] = []
     if "B0" in suite_ids:
@@ -906,6 +1905,10 @@ def run_probe(suite_ids: Sequence[str], fixture_dir: Path, manifest: Dict[str, A
                 )
     if "B1" in suite_ids:
         checks.extend(run_probe_b1(fixture_dir, manifest))
+    if "B2" in suite_ids:
+        checks.extend(_run_probe_impl(B2_PROBE_NAMES, _b2_probe_mutation, run_suite_b2, fixture_dir, manifest))
+    if "B3" in suite_ids:
+        checks.extend(_run_probe_impl(B3_PROBE_NAMES, _b3_probe_mutation, run_suite_b3, fixture_dir, manifest))
     return checks
 
 

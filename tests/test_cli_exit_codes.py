@@ -1,10 +1,14 @@
 """退出码契约与"阶段未就绪"拦截（锁进测试，后续重构不漂移）。
 
-**M2 的退役在这一组里留下两组断言**（`plan/03` §11 的"五处同步"之测试面）：
+**M2/M3 的退役在这一组里留下两组断言**（`plan/03` §11 的"五处同步"之测试面）：
 
 1. **防复活负断言**：已交付命令**不得**重新出现在 `STAGE_NOT_READY` 里——否则
    "退役"会退化成"加了一条没人记得删的条目"，用户敲命令又变回退出码 3；
 2. **接线正断言**：退役后每条命令都真的能被解析、能跑 `--help`、且**不再**返回 3。
+
+M3 退役的是 `search` / `report`（洞察模块交付）：断言形态与 M2 完全一致
+（负断言 + 正断言 + "不再返回 3"的行为证据），只是换了命令组——
+**旧退出码断言在同一次提交里退役**（K22）。
 """
 
 from __future__ import annotations
@@ -22,6 +26,9 @@ from helpers import DATA_ROOT, EXAMPLE_CONFIG, run_module, stderr_text, stdout_t
 
 #: M2 交付的三条命令（退役登记的"防复活"对象）。
 M2_DELIVERED = ("snapshot", "archive", "status")
+
+#: M3 交付的两条命令（检索 + 行为洞察的数据层）。
+M3_DELIVERED = ("search", "report")
 
 
 def _isolated_home(tmp_path) -> dict:
@@ -103,6 +110,41 @@ def test_m2_commands_are_registered_as_delivered(command):
     """正断言：退役后必须在已交付表里（两表互斥且并集 = 全部命令）。"""
     assert command in DELIVERED_COMMANDS
     assert command not in STAGE_NOT_READY
+
+
+@pytest.mark.parametrize("command", M3_DELIVERED)
+def test_m3_commands_are_no_longer_stage_not_ready(command):
+    """防复活：M3 退役的条目不得回到 `STAGE_NOT_READY`（照 M2 的判据抄）。"""
+    assert command not in STAGE_NOT_READY, (
+        "%s 已在 M3 交付，不得回到未就绪登记表（退役流程见 plan/03 §11）" % command
+    )
+
+
+@pytest.mark.parametrize("command", M3_DELIVERED)
+def test_m3_commands_are_registered_as_delivered(command):
+    """正断言：退役后必须在已交付表里。"""
+    assert command in DELIVERED_COMMANDS
+    assert command not in STAGE_NOT_READY
+
+
+@pytest.mark.parametrize("command", M3_DELIVERED)
+def test_m3_commands_do_not_exit_three(command, tmp_path):
+    """退役的行为证据：`search` / `report` 不再返回 3。
+
+    在**没有配置、没有归档库**的隔离环境里跑：两条都应报降级（1，"还没有档案"是用户
+    旅程的正常起点），且**不写任何文件**。关键是**不得**是 3——那是"未交付"的语义。
+    """
+    out_dir = tmp_path / "out"
+    result = run_module(
+        [command, "--config", str(EXAMPLE_CONFIG), "--archive-db", str(tmp_path / "none.db"),
+         "--out-dir", str(out_dir)],
+        cwd=tmp_path,
+        env_extra=_isolated_home(tmp_path),
+    )
+    assert result.returncode == 1, (
+        "%s 应当报降级（1：档案还不存在），实际 %d" % (command, result.returncode)
+    )
+    assert not out_dir.exists(), "%s 在档案缺失时不得写出任何产物" % command
 
 
 def test_delivered_and_pending_tables_are_disjoint_and_complete():

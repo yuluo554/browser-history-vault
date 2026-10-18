@@ -47,8 +47,11 @@ jobs:
       # 每交付一个模块就把它的套件从 manifest 翻成 enabled，并加进这里的命令行。
       # B1（归档幂等）随归档模块在 M2 启用：它真跑归档链路（临时库 + 临时快照），
       # 并断言源库 mtime 与字节不变。
+      # B2（查询确定性）/ B3（洞察口径）随检索与洞察模块在 M3 启用：都真跑
+      # "归档 → 读回 → 检索/洞察"的完整链路，真值逐条点名（样本驱动）+
+      # 边界推导 / 打乱输入 / 下钻对账 / 隐私零出现（规则驱动）。
       - name: 基准（已启用套件；门槛从 manifest 读）
-        run: python tools/bench.py --only B0 B1
+        run: python tools/bench.py --only B0 B1 B2 B3
 
       # 这一步覆盖裸 console script 通路：`python -m <pkg>` 与裸 `<pkg>` 的 sys.path
       # 来源不同，"前者过了"证明不了"后者能跑"（安装面第四面）。--require-console-script

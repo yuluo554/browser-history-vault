@@ -37,11 +37,11 @@ def _capture(argv, registry=None):
     return code, buffer.getvalue()
 
 
-def test_only_enabled_suite_exits_zero():
-    code, text = _capture(["--only", "B0", "B1"])
+def test_only_enabled_suites_exit_zero():
+    code, text = _capture(["--only", "B0", "B1", "B2", "B3"])
     assert code == bench.EXIT_OK
-    assert "[达标] B0" in text
-    assert "[达标] B1" in text
+    for suite in ("B0", "B1", "B2", "B3"):
+        assert "[达标] %s" % suite in text
     assert "[FAIL]" not in text
 
 
@@ -61,16 +61,16 @@ def test_unknown_suite_is_a_usage_error():
 
 
 def test_json_output_is_machine_readable_and_deterministic():
-    first_code, first = _capture(["--only", "B0", "B1", "--json"])
-    second_code, second = _capture(["--only", "B0", "B1", "--json"])
+    first_code, first = _capture(["--only", "B0", "B1", "B2", "B3", "--json"])
+    second_code, second = _capture(["--only", "B0", "B1", "B2", "B3", "--json"])
     assert first_code == second_code == bench.EXIT_OK
     assert first == second
     document = json.loads(first)
     assert document["exit_code"] == bench.EXIT_OK
     assert document["totals"]["fail"] == 0
     suites = {item["suite"]: item for item in document["suites"]}
-    assert suites["B0"]["status"] == "pass"
-    assert suites["B1"]["status"] == "pass"
+    for suite in ("B0", "B1", "B2", "B3"):
+        assert suites[suite]["status"] == "pass"
     assert {check["code"] for check in suites["B0"]["checks"]} >= {
         "thresholds-read", "sample-quota", "truth-recompute", "data-ledger",
     }
@@ -78,31 +78,61 @@ def test_json_output_is_machine_readable_and_deterministic():
         "sample-same-snapshot-twice", "sample-url-id-stable", "source-untouched",
         "coverage-matches-manifest",
     }
+    assert {check["code"] for check in suites["B2"]["checks"]} >= {
+        "upstream-rows-match-canonical", "sample-search-hits", "rule-order-explicit",
+        "rule-paging-partition", "rule-csv-columns", "rule-privacy-zero-appearance",
+    }
+    assert {check["code"] for check in suites["B3"]["checks"]} >= {
+        "sample-sessions", "sample-forgotten", "sample-heatmap", "sample-domains",
+        "rule-parity-with-reference", "rule-drilldown-resolvable",
+    }
 
 
 def test_pending_suites_are_declared_in_the_ledger_and_surfaced():
     code, text = _capture([])
     assert code == bench.EXIT_NOT_MET
-    for suite in ("B2", "B3", "B4", "B5"):
+    for suite in ("B4", "B5"):
         assert suite in text
     assert "尚未交付" in text
 
 
+def test_delivered_suites_are_no_longer_pending():
+    """M3 的反向证据：已启用的 B2/B3 必须**不在**待办里（"退役"要在数据侧留痕）。"""
+    code, text = _capture([])
+    for suite in ("B2", "B3"):
+        assert "[未启用] %s" % suite not in text
+        assert "[达标] %s" % suite in text
+
+
 def test_probe_detects_every_injected_defect():
-    code, text = _capture(["--probe", "--only", "B0", "B1"])
+    code, text = _capture(["--probe", "--only", "B0", "B1", "B2", "B3"])
     assert code == bench.EXIT_OK, text
-    expected = len(bench.PROBE_MUTATIONS) + len(bench.B1_PROBE_NAMES)
-    assert text.count("[PASS]") == expected
+    expected = (
+        len(bench.PROBE_MUTATIONS)
+        + len(bench.B1_PROBE_NAMES)
+        + len(bench.B2_PROBE_NAMES)
+        + len(bench.B3_PROBE_NAMES)
+    )
+    assert text.count("[PASS]") == expected, "探活条数与清单不符（清单与实际没对齐）"
     assert "0 条未被检出" in text
 
 
-def test_b1_probe_injects_into_the_implementation_not_the_data():
-    """B1 的探活必须打在实现上：清单非空且每一条都能被 B1 的检查项抓到。"""
-    assert len(bench.B1_PROBE_NAMES) >= 3
-    code, text = _capture(["--probe", "--only", "B1"])
+@pytest.mark.parametrize(
+    "names,suite",
+    [(None, "B1"), (None, "B2"), (None, "B3")],
+)
+def test_implementation_probes_target_their_own_suite(names, suite):
+    """每一组实现侧探活都必须能被它自己那个套件抓到（不是被别的套件顺手抓到）。"""
+    code, text = _capture(["--probe", "--only", suite])
     assert code == bench.EXIT_OK, text
-    for name in bench.B1_PROBE_NAMES:
+    for name in getattr(bench, "%s_PROBE_NAMES" % suite):
         assert "probe-%s" % name in text
+
+
+@pytest.mark.parametrize("suite", ["B1", "B2", "B3"])
+def test_probe_names_are_non_empty(suite):
+    """探活清单非空（空清单会让"逐条注入"变成什么都没注入）。"""
+    assert len(getattr(bench, "%s_PROBE_NAMES" % suite)) >= 3
 
 
 def test_probe_reports_failure_when_a_mutation_cannot_be_injected(monkeypatch):
@@ -151,8 +181,8 @@ def test_bench_leaves_the_fixture_untouched():
         }
 
     before = snapshot()
-    assert _capture(["--only", "B0", "B1"])[0] == bench.EXIT_OK
-    assert _capture(["--probe", "--only", "B0", "B1"])[0] == bench.EXIT_OK
+    assert _capture(["--only", "B0", "B1", "B2", "B3"])[0] == bench.EXIT_OK
+    assert _capture(["--probe", "--only", "B0", "B1", "B2", "B3"])[0] == bench.EXIT_OK
     after = snapshot()
     assert before.keys() == after.keys(), "基准跑完后 fixtures 的文件集合变了"
     assert {k: v[0] for k, v in before.items()} == {k: v[0] for k, v in after.items()}, "基准改动了冻结产物的字节"
@@ -207,7 +237,7 @@ def test_only_whitelist_matches_the_ledger_suites():
     assert set(bench.SUITE_RUNNERS) <= declared
 
 
-@pytest.mark.parametrize("suite", ["B2", "B3", "B4", "B5"])
+@pytest.mark.parametrize("suite", ["B4", "B5"])
 def test_pending_suite_cannot_be_probed(suite):
     """未启用套件不能被探活"顺便放行"：它没有实现，探活只对已启用套件有意义。"""
     runner = bench.SUITE_RUNNERS.get(suite)
