@@ -132,7 +132,10 @@ def smoke_channel(label, base, tmp_dir):
     输入全部指向合成 fixtures；`HOME` 系列指向临时目录（不读真实浏览历史）。
     """
     missing = str(tmp_dir / "definitely-missing.json")
-    isolated = isolated_env(tmp_dir / "home")
+    # HOME 按**通路**分开：首启隐私说明的标记落在用户主目录，两条通路共用一份 HOME 时，
+    # 先跑的 console 通道会把标记写掉，于是 module 通道永远看不到"首次运行"——
+    # 这条检查就会变成"看起来在跑、其实恒绿"（实测踩到）。
+    isolated = isolated_env(tmp_dir / ("home-%s" % label))
     chrome_dir = str(FIXTURE_DIR / "chrome")
     running_dir = str(FIXTURE_DIR / "chrome-running")
     archive_db = str(tmp_dir / "archive.db")
@@ -337,6 +340,12 @@ def smoke_channel(label, base, tmp_dir):
             detail = "机读输出不符合预期：%s" % exc
     add(PASS if ok else FAIL, "%s/report" % label, detail)
 
+    # 首启隐私说明：本通道的**第一次** report 必须打印三类声明（只读副本 / 本地生成 / 零上传）
+    first_text = err.decode("utf-8", "replace")
+    notice_ok = all(keyword in first_text for keyword in ("只读副本", "本地生成", "零上传"))
+    add(PASS if notice_ok else FAIL, "%s/first-run-notice-printed" % label,
+        "首次 report 的 stderr %s三类隐私声明" % ("含" if notice_ok else "缺"))
+
     report_json = Path(out_dir) / "report.json"
     ok = report_json.is_file()
     detail = "缺 %s" % report_json
@@ -414,6 +423,67 @@ def smoke_channel(label, base, tmp_dir):
     add(PASS if ok else FAIL, "%s/cluster-text" % label,
         "rc=%d，生效口径%s，主题区块%s" % (code, "有" if "生效口径" in text else "缺",
                                      "有" if "主题聚类" in text else "缺"))
+
+    # ---- report --html：单文件 HTML（零外链 / 私密零出现 / 头三块在）----
+    html_dir = str(tmp_dir / "out-html")
+    code, out, err = run(
+        base + ["report", "--config", str(EXAMPLE_CONFIG), "--archive-db", archive_db,
+                "--out-dir", html_dir, "--at-us", str(ANCHOR_NOON_US), "--html"],
+        env_extra=isolated,
+    )
+    ok = code == 0
+    detail = "rc=%d" % code
+    html_path = Path(html_dir) / "report.html"
+    if ok:
+        try:
+            payload = html_path.read_text(encoding="utf-8")
+            markers = ("http:" + "//", "https:" + "//", "/" + "/")
+            forbidden_tags = ("<link", "<script", "<img", "<iframe", "@import")
+            ok = (
+                html_path.stat().st_size > 0
+                and not any(marker in payload.lower() for marker in markers)
+                and not any(tag in payload.lower() for tag in forbidden_tags)
+                and "覆盖区间" in payload
+                and "生效口径" in payload
+                and "归档来源与时间" in payload
+                and "缺口" in payload
+            )
+            detail = "rc=0，%d 字节；零外链；头三块%s" % (
+                html_path.stat().st_size,
+                "在位" if ("覆盖区间" in payload and "生效口径" in payload
+                           and "归档来源与时间" in payload) else "**缺失**",
+            )
+        except OSError as exc:
+            ok = False
+            detail = "report.html 不可读：%s" % exc
+    add(PASS if ok else FAIL, "%s/report-html" % label, detail)
+
+    # 双跑逐字节（确定性：无时钟字段、无随机序）
+    second_dir = str(tmp_dir / "out-html-2")
+    run(
+        base + ["report", "--config", str(EXAMPLE_CONFIG), "--archive-db", archive_db,
+                "--out-dir", second_dir, "--at-us", str(ANCHOR_NOON_US), "--html"],
+        env_extra=isolated,
+    )
+    first_bytes = (Path(html_dir) / "report.html").read_bytes() if html_path.is_file() else b""
+    second_bytes = (Path(second_dir) / "report.html").read_bytes()
+    same = bool(first_bytes) and first_bytes == second_bytes
+    add(PASS if same else FAIL, "%s/report-html-determinism" % label,
+        "两次渲染逐字节%s" % ("一致" if same else "不同"))
+
+    # 首启隐私说明：只在**第一次** report 出现（标记写用户主目录，不写仓库）。
+    # 本通道第一次 report 就是上面那条 `--json`，所以这里断言"再跑一次不再念"。
+    code, out, err = run(
+        base + ["report", "--config", str(EXAMPLE_CONFIG), "--archive-db", archive_db,
+                "--out-dir", str(tmp_dir / "out-notice"), "--at-us", str(ANCHOR_NOON_US)],
+        env_extra=isolated,
+    )
+    text = out.decode("utf-8", "replace") + err.decode("utf-8", "replace")
+    repeated = any(keyword in text for keyword in ("只读副本", "本地生成", "零上传"))
+    marker = Path(isolated["USERPROFILE"]) / ".browser-history-vault" / "first-run.json"
+    add(PASS if (not repeated and marker.is_file()) else FAIL, "%s/first-run-notice" % label,
+        "首启说明只念一次=%s；标记在用户主目录=%s"
+        % (not repeated, "是" if marker.is_file() else "否"))
 
     # ---- 档案不存在时：检索 / 报告 / 聚类都是降级（1），且不写任何产物 ----
     missing_db = str(tmp_dir / "definitely-missing.db")

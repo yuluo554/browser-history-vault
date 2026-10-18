@@ -23,11 +23,13 @@
 2. **未启用不冒充通过**：尚未落地的套件必须在台账里显式登记 `enabled: false` +
    原因，并计入退出码 1。空分母（`0/0`）绝不能显示成"通过"。
 
-## 为什么 B0 现在就能跑，B1–B5 还没启用
+## 六套件怎么来的（B0–B5 全部已启用）
 
-本阶段（数据先行）只交付**数据**：B0 测的是"真值能否由**独立参照实现**从规范化导出
-复算出来"——它不依赖任何引擎代码，是数据自身的完整性门。B1–B5 各自需要模块①–⑤，
-按里程碑逐个把 `enabled` 翻成 true 并补上可证伪探活（`plan/05` §7）。
+B0 测的是"真值能否由**独立参照实现**从规范化导出复算出来"——它不依赖任何引擎代码，
+是数据自身的完整性门。B1–B5 各自对应一个功能模块，随各自里程碑逐个把 `enabled`
+翻成 true 并补上可证伪探活（`plan/05` §7）：B1 归档（M2）/ B2 检索（M3）/ B3 洞察（M3）/
+B4 聚类（M4）/ B5 报告（M5）。**M5 起 `PENDING_SUITES` 为空**，全量跑退出码为 0；
+"未启用"分支仍保留在代码里（它是台账契约的一部分，删掉会让"未启用"退化成"通过"）。
 
 ## B1 的两层（M2 起启用）
 
@@ -1707,6 +1709,363 @@ SUITE_RUNNERS["B4"] = run_suite_b4
 
 
 # --------------------------------------------------------------------------
+# 套件 B5：隐私与零外链（报告层：私密零出现 / 敏感打码 / 零外链 / 渲染层零判定）
+# --------------------------------------------------------------------------
+
+#: 报告层的四条输出通路（样本/规则两层共用的监视面）。
+B5_CHANNELS: Tuple[str, ...] = ("report-json", "report-text", "report-html", "search-csv")
+
+#: 规则层注入的伪造主机（**私密清单项的子域 + 清单项本身 + 敏感项**）。
+#: 刻意不放进真值库：它们考的是"各通路有没有过门禁"，不是"分类对不对"
+#: （分类对不对由 `assumptions/privacy.json` 的样本层点名）。
+B5_FORGED_HOSTS: Tuple[str, ...] = (
+    "forged.private.example.invalid",
+    "mail.google.com",
+    "forged.sensitive.example.test",
+)
+
+#: 每条伪造主机的访问次数：必须多到进得了各类榜单（否则"注入成功但检不出"）。
+B5_FORGED_VISITS = 60
+
+
+def _b5_config_scope(manifest: Dict[str, Any]):
+    return _fixture_config(manifest)
+
+
+def _b5_truth_hosts(fixture_dir: Path, config) -> Tuple[List[str], List[str]]:
+    """真值点名的（私密, 敏感）主机，并与**配置清单**合并成监视面。
+
+    取并集的原因：真值冻结的是样本，配置清单是本次实际生效的口径；
+    只盯其中一份，另一份漂移时门就是空的。
+    """
+    bundle = _truth_bundle(fixture_dir, "privacy")
+    private = sorted(set(bundle["zero_appearance_hosts"]) | set(config.private_domains))
+    sensitive = sorted(set(bundle["masked_hosts"]) | set(config.sensitive_domains))
+    return private, sensitive
+
+
+def _b5_build_rows(rows, config) -> List[Dict[str, Any]]:
+    """把 fixtures 行与**伪造的私密/敏感域名**行拼在一起（规则层与探活共用）。
+
+    伪造行刻意做成**访问量最大的一批**（每条主机 60 次）：只有它们真的进得了
+    频次榜 / 域名榜，才考得住"URL 里的主机名有没有被一起打码"——排在榜外的行
+    根本不会出现在产物里，探活会"注入成功但检不出"（实测踩到）。
+    """
+    import datetime as _datetime
+
+    from browser_history_vault.timeutil import local_us_of_datetime
+
+    base_us = local_us_of_datetime(
+        _datetime.datetime(2026, 6, 1, 10, 0, 0), int(config.timezone_utc_offset_minutes)
+    )
+    forged = []
+    visit_id = 900000
+    for index, host in enumerate(B5_FORGED_HOSTS, 1):
+        for repeat in range(B5_FORGED_VISITS):
+            visit_id += 1
+            forged.append(
+                {
+                    "visit_id": visit_id,
+                    "url_id": 900000 + index,
+                    "url": "https://%s/forged-path-%d" % (host, index),
+                    "title": "伪造样本 %d 标题回显 %s" % (index, host),
+                    "host": host,
+                    "visit_time_us": base_us + repeat * 1000 + index,
+                    "source_browser": "chrome",
+                    "source_profile": "Default",
+                    "transition": 0,
+                    "visit_duration_us": 0,
+                }
+            )
+    return list(rows) + forged
+
+
+def _b5_anchor_now_us(fixture_dir: Path) -> int:
+    return _anchor_now_us(load_manifest(fixture_dir))
+
+
+def _b5_page(rows, config, fixture_dir: Path):
+    from browser_history_vault import report
+
+    return report.build_page(
+        rows,
+        config=config,
+        meta=report.ReportMeta(
+            archive_db="<bench>",
+            config_path="<bench>",
+            now_us=_b5_anchor_now_us(fixture_dir),
+        ),
+    )
+
+
+def _b5_payloads(rows, config, fixture_dir: Path) -> Dict[str, str]:
+    """跑一遍报告的**四条输出通路**，返回各自的文本（规则层与探活共用同一个取数面）。"""
+    import csv as _csv
+    import io as _io
+
+    from browser_history_vault import insight, report
+    from browser_history_vault.search import (
+        CSV_COLUMNS,
+        SearchQuery,
+        local_time_text,
+        search_rows,
+    )
+
+    now_us = _b5_anchor_now_us(fixture_dir)
+    document = insight.build_report(
+        rows, config=config, now_us=now_us, archive_db="<bench>", config_path="<bench>"
+    )
+    page = report.build_page(
+        rows,
+        config=config,
+        meta=report.ReportMeta(archive_db="<bench>", config_path="<bench>", now_us=now_us),
+    )
+    html = report.render_page(page)
+
+    visible = report.keep_visible_rows(
+        rows,
+        private_domains=config.private_domains,
+        sensitive_domains=config.sensitive_domains,
+    )
+    result = search_rows(
+        visible,
+        SearchQuery(text=None),
+        ngram_n=int(config.ngram_n),
+        private_domains=config.private_domains,
+        sensitive_domains=config.sensitive_domains,
+    )
+    offset = int(config.timezone_utc_offset_minutes)
+    buffer = _io.StringIO(newline="")
+    writer = _csv.writer(buffer, lineterminator="\n")
+    writer.writerow(list(CSV_COLUMNS))
+    for hit in result.hits:
+        rendered = hit.to_document(
+            offset_minutes=offset,
+            private_domains=config.private_domains,
+            sensitive_domains=config.sensitive_domains,
+        )
+        writer.writerow(
+            [
+                str(hit.visit_id),
+                local_time_text(hit.visit_time_us, offset),
+                rendered["url"],
+                rendered["title"],
+                rendered["domain"],
+                hit.source_browser,
+            ]
+        )
+    return {
+        "report-json": json.dumps(document, sort_keys=True, ensure_ascii=False),
+        "report-text": insight.render_report(document),
+        "report-html": html,
+        "search-csv": buffer.getvalue(),
+    }
+
+
+def _b5_samples(fixture_dir: Path, manifest: Dict[str, Any]) -> List[Check]:
+    """样本驱动：`assumptions/privacy.json` 8 条（含 3 反例）逐条点名。
+
+    走的是**生产装配入口**（`report.privacy_lists` / `classify_host` / `display_domain`），
+    不是在基准里另写一份分类——"清单被静默关闭"这类缺陷正是打在这里。
+    """
+    from browser_history_vault import privacy, report
+
+    config = _b5_config_scope(manifest)
+    bundle = _truth_bundle(fixture_dir, "privacy")
+    private_domains, sensitive_domains = report.privacy_lists(config)
+    problems: List[str] = []
+    for sample in bundle["samples"]:
+        host = str(sample["input"]["host"])
+        expected = sample["expected"]
+        kind = report.classify_host(host, private_domains, sensitive_domains)
+        if kind != expected["classification"]:
+            problems.append("%s：分类 %s，期望 %s" % (sample["id"], kind, expected["classification"]))
+            continue
+        if kind == privacy.PRIVATE:
+            try:
+                shown = report.display_domain(host, private_domains, sensitive_domains)
+            except Exception:  # noqa: BLE001 - 私密主机"报错"就是正确形态
+                shown = ""
+            if shown:
+                problems.append("%s：私密主机居然有可展示形态 %s" % (sample["id"], shown))
+            continue
+        masked = report.display_domain(host, private_domains, sensitive_domains)
+        if expected.get("raw_host_must_not_appear") and host in masked:
+            problems.append("%s：掩码形态仍含原主机名（%s）" % (sample["id"], masked))
+        if expected.get("must_appear_in_output") and masked != host:
+            problems.append("%s：形似主机被误掩码/误排除（得到 %s）" % (sample["id"], masked))
+    checks = [
+        Check(
+            "sample-privacy-classification",
+            not problems,
+            "；".join(problems[:3]) if problems
+            else "%d 条隐私真值逐条一致（含 %d 条形似反例：不得按子串误判）"
+            % (len(bundle["samples"]), sum(1 for s in bundle["samples"] if s["counterexample"])),
+        )
+    ]
+
+    with tempfile.TemporaryDirectory(prefix="bhvault-bench-b5-samples-") as tmp:
+        archive_db = _build_fixture_archive(fixture_dir, manifest, Path(tmp) / "archive.db")
+        rows = _fixture_rows(archive_db)
+    _cleanup_bench_snapshots()
+    summary = privacy.summarize(
+        rows, private_domains=private_domains, sensitive_domains=sensitive_domains
+    )
+    checks.append(
+        Check(
+            "sample-privacy-counts",
+            summary["excluded_visit_records"] == int(bundle["excluded_visit_count"])
+            and summary["masked_visit_records"] == int(bundle["masked_visit_count"]),
+            "私密排除 %d 条（真值 %d）/ 敏感打码 %d 条（真值 %d）；单位 = 访问记录数"
+            % (
+                summary["excluded_visit_records"], int(bundle["excluded_visit_count"]),
+                summary["masked_visit_records"], int(bundle["masked_visit_count"]),
+            ),
+        )
+    )
+    return checks
+
+
+def _b5_rules(rows, manifest: Dict[str, Any], fixture_dir: Path) -> List[Check]:
+    """规则驱动：伪造私密域名注入四条通路 → 零出现；敏感打码；零外链；AST 三条；双跑；fail-closed。"""
+    from browser_history_vault import privacy, render_gate, report as report_module
+
+    config = _b5_config_scope(manifest)
+    private_hosts, sensitive_hosts = _b5_truth_hosts(fixture_dir, config)
+    forged = _b5_build_rows(rows, config)
+    payloads = _b5_payloads(forged, config, fixture_dir)
+    checks: List[Check] = []
+
+    # 1) 四条通路零私密（判据 = **主机身份**，不是子串）
+    problems = [
+        "%s 泄漏 %d 个" % (channel, len(_leaked_hosts(payloads[channel], private_hosts)))
+        for channel in B5_CHANNELS
+        if _leaked_hosts(payloads[channel], private_hosts)
+    ]
+    checks.append(
+        Check(
+            "rule-private-zero-appearance",
+            not problems,
+            "；".join(problems) if problems
+            else "四条通路（%s）私密主机零出现（监视面 %d 个，含注入的伪造项）"
+            % (" / ".join(B5_CHANNELS), len(private_hosts)),
+        )
+    )
+
+    # 2) 敏感打码：**原主机名一条通路都不许出现**；掩码形态至少在其中一条可展示通路里出现
+    #    （人读文本只打 top_n 个域名，敏感域名未必进榜——"没进榜"不等于"没打码"）。
+    masked_problems = []
+    masked_seen = []
+    for channel in B5_CHANNELS:
+        payload = payloads[channel]
+        if any(privacy.mask_host(host) in payload for host in sensitive_hosts):
+            masked_seen.append(channel)
+        if _leaked_hosts(payload, sensitive_hosts):
+            masked_problems.append("%s 出现原主机名" % channel)
+    if not masked_seen:
+        masked_problems.append("四条通路都没有掩码形态（保留统计却看不见）")
+    checks.append(
+        Check(
+            "rule-sensitive-masked",
+            not masked_problems,
+            "；".join(masked_problems[:3]) if masked_problems
+            else "敏感主机零原样出现；掩码形态出现在 %s（监视 %d 个）"
+            % (" / ".join(masked_seen), len(sensitive_hosts)),
+        )
+    )
+
+    # 3) 零外链（从严档：三类标记 + 外部资源入口）
+    html = payloads["report-html"]
+    markers = render_gate.external_reference_hits(html)
+    tags = [tag for tag in render_gate.EXTERNAL_TAGS if tag in html.lower()]
+    checks.append(
+        Check(
+            "rule-zero-external-links",
+            not markers and not tags,
+            "HTML 命中外部引用标记 %s / 资源入口 %s" % (markers, tags) if (markers or tags)
+            else "单文件 HTML 零外部引用（从严档：http / https / 双斜杠 / link / script / "
+                 "img / iframe / @import 全无）",
+        )
+    )
+
+    # 4) 渲染层零判定（AST 三条，阈值清单由报告页派生）
+    page = _b5_page(forged, config, fixture_dir)
+    numbers = render_gate.threshold_numbers_from_page(page)
+    violations = render_gate.check_render_module(forbidden_numbers=numbers)
+    checks.append(
+        Check(
+            "rule-render-layer-zero-judgement",
+            not violations and bool(numbers),
+            "；".join(violations[:3]) if violations
+            else "渲染层不 import 引擎、无算术（BinOp 0 处）、不内联口径数值（监视 %d 个阈值）"
+            % len(numbers),
+        )
+    )
+
+    # 5) 双跑逐字节（同一输入两次渲染）
+    again = _b5_payloads(forged, config, fixture_dir)["report-html"]
+    checks.append(
+        Check(
+            "rule-html-repeatable",
+            again == html and bool(html),
+            "两次渲染%s（%d 字节）"
+            % ("逐字节一致" if again == html else "**不一致**", len(html.encode("utf-8"))),
+        )
+    )
+
+    # 6) 私密 fail-closed：渲染出口收到含私密主机的产物即报错（不是静默掩码）
+    from browser_history_vault import render as render_module
+
+    original_render = render_module.render_html
+    try:
+        render_module.render_html = lambda page: (  # type: ignore[assignment]
+            "<html><body>https:&#47;/mail.private.example.invalid/inbox</body></html>"
+        )
+        try:
+            report_module.render_page(
+                {"guard": {"forbidden_hosts": ["mail.private.example.invalid"]},
+                 "effective_config": []}
+            )
+        except Exception as exc:  # noqa: BLE001 - 只关心"是不是 privacy 这条门红的"
+            failed_closed = getattr(exc, "code", "") == "render-private-host"
+            detail = str(exc)
+        else:
+            failed_closed = False
+            detail = ""
+    finally:
+        render_module.render_html = original_render  # type: ignore[assignment]
+    checks.append(
+        Check(
+            "rule-private-fail-closed",
+            failed_closed,
+            "私密主机走到渲染出口即报错（%s）" % detail[:80] if failed_closed
+            else "私密主机走到渲染出口**没有报错**（静默通过 = 门禁短路；%s）" % detail[:80],
+        )
+    )
+    return checks
+
+
+def run_suite_b5(fixture_dir: Path, manifest: Dict[str, Any]) -> List[Check]:
+    """隐私与零外链：样本驱动（隐私真值 8 条 + 计数）+ 规则驱动（四通路 / 打码 / 零外链 / AST / 双跑 / fail-closed）。"""
+    checks: List[Check] = []
+    try:
+        with tempfile.TemporaryDirectory(prefix="bhvault-bench-b5-") as tmp:
+            archive_db = _build_fixture_archive(fixture_dir, manifest, Path(tmp) / "archive.db")
+            rows = _fixture_rows(archive_db)
+            checks.extend(_guard("samples", lambda: _b5_samples(fixture_dir, manifest)))
+            checks.extend(_guard("rules", lambda: _b5_rules(rows, manifest, fixture_dir)))
+    except Exception as exc:  # noqa: BLE001
+        checks.append(Check("b5-error", False, "B5 未能跑完：%s" % exc))
+        return checks
+    finally:
+        _cleanup_bench_snapshots()
+    return checks
+
+
+SUITE_RUNNERS["B5"] = run_suite_b5
+
+
+# --------------------------------------------------------------------------
 # 编排
 # --------------------------------------------------------------------------
 
@@ -1987,6 +2346,22 @@ B4_PROBE_NAMES: Tuple[str, ...] = (
     "cluster-privacy-gate-bypassed",
 )
 
+#: B5 的探活缺陷（同上，四条各打一条报告层口径）。**每一条都打在报告的消费处**
+#: （基准走 `report.build_page` / `report.render_page` / `render_gate`，不是定义模块）。
+#:
+#: | 注入 | 对应真实缺陷 |
+#: |---|---|
+#: | 私密清单被静默关闭 | `privacy_lists` 返回空清单 → 私密记录全进统计与产物 |
+#: | 只掩码域名列、URL 漏出 | 输出面只对 `domain` 打码，URL 里的原主机名照旧 |
+#: | 渲染层直接读判定模块 | 渲染层 `from . import privacy` → "渲染层零判定"退化成口号 |
+#: | HTML 双跑不一致 | 渲染产物带上次序不定的集合/字典顺序 → 双跑字节不同 |
+B5_PROBE_NAMES: Tuple[str, ...] = (
+    "report-private-list-disabled",
+    "report-masks-domain-only",
+    "render-imports-engine",
+    "report-html-unstable",
+)
+
 
 def _b2_probe_mutation(name: str) -> Tuple[str, Callable[[], None], Callable[[], None]]:
     from browser_history_vault import privacy as privacy_module
@@ -2225,6 +2600,77 @@ def _b4_probe_mutation(name: str) -> Tuple[str, Callable[[], None], Callable[[],
     raise BenchError("未登记的 B4 探活项：%s" % name)
 
 
+def _b5_probe_mutation(name: str) -> Tuple[str, Callable[[], None], Callable[[], None]]:
+    from browser_history_vault import render as render_module
+    from browser_history_vault import render_gate as gate_module
+    from browser_history_vault import report as report_module
+
+    if name == "report-private-list-disabled":
+        original = report_module.privacy_lists
+
+        def inject() -> None:
+            # 缺陷形态：清单被"静默关闭"（返回空清单）→ 私密记录全进统计与产物。
+            # 生产装配的取数、分类、呈现三处都从这里取清单，因此一条注入同时打穿它们。
+            report_module.privacy_lists = lambda config: ((), ())  # type: ignore[assignment]
+
+        def restore() -> None:
+            report_module.privacy_lists = original  # type: ignore[assignment]
+
+        return "私密清单被静默关闭（空清单）", inject, restore
+
+    if name == "report-masks-domain-only":
+        # 缺陷形态：只掩码"域名那一列"，URL / 标题里的原主机名照旧。
+        # 打在**消费处**：`insight` 与 `search` 都通过 `privacy.redact_text` 做这件事，
+        # 但 `display_host`（域名列）照常打码——正是"掩码了域名列就以为安全"的形态。
+        from browser_history_vault import privacy as privacy_module
+
+        original_redact = privacy_module.redact_text
+
+        def inject() -> None:
+            privacy_module.redact_text = lambda text, host, private_domains, sensitive_domains: str(text)  # type: ignore[assignment]
+
+        def restore() -> None:
+            privacy_module.redact_text = original_redact  # type: ignore[assignment]
+
+        return "只掩码域名列、URL 与标题里的主机名漏出", inject, restore
+
+    if name == "render-imports-engine":
+        original = gate_module.render_module_source
+
+        def inject() -> None:
+            # 缺陷形态：渲染层直接 import 判定模块 → AST 第 ① 条必须红。
+            gate_module.render_module_source = lambda: (  # type: ignore[assignment]
+                "from . import privacy\n\n"
+                "def render_html(page):\n"
+                '    return "<html></html>"\n'
+            )
+
+        def restore() -> None:
+            gate_module.render_module_source = original  # type: ignore[assignment]
+
+        return "渲染层直接 import 判定模块", inject, restore
+
+    if name == "report-html-unstable":
+        original = render_module.render_html
+        state = {"calls": 0}
+
+        def inject() -> None:
+            def drifting(page):
+                # 缺陷形态：产物里混入会变的东西（这里是调用次数） → 双跑不再逐字节一致。
+                state["calls"] = state["calls"] + 1
+                return original(page) + ("<!-- run %d -->" % state["calls"])
+
+            render_module.render_html = drifting  # type: ignore[assignment]
+
+        def restore() -> None:
+            render_module.render_html = original  # type: ignore[assignment]
+
+        return "HTML 双跑不一致（产物混入运行期状态）", inject, restore
+
+    raise BenchError("未登记的 B5 探活项：%s" % name)
+
+
+
 def _run_probe_impl(
     names: Sequence[str],
     mutate: Callable[[str], Tuple[str, Callable[[], None], Callable[[], None]]],
@@ -2305,6 +2751,8 @@ def run_probe(suite_ids: Sequence[str], fixture_dir: Path, manifest: Dict[str, A
         checks.extend(_run_probe_impl(B3_PROBE_NAMES, _b3_probe_mutation, run_suite_b3, fixture_dir, manifest))
     if "B4" in suite_ids:
         checks.extend(_run_probe_impl(B4_PROBE_NAMES, _b4_probe_mutation, run_suite_b4, fixture_dir, manifest))
+    if "B5" in suite_ids:
+        checks.extend(_run_probe_impl(B5_PROBE_NAMES, _b5_probe_mutation, run_suite_b5, fixture_dir, manifest))
     return checks
 
 

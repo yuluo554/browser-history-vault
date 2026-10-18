@@ -84,7 +84,7 @@
 | 规范化导出（**逐字节冻结**） | ✅ 已落地 | `canonical/visits.jsonl`（367 行）、`canonical/counts.json` |
 | 植入真值（九类） | ✅ 已落地 | `assumptions/*.json`（68 条样本，含 26 条反例） |
 | 台账（种子/覆盖/门槛/sha256） | ✅ 已落地 | `manifest.json` |
-| 基准套件 | 🔶 部分 | **B0 + B1 + B2 + B3 + B4 已启用**（真值复算 / 归档幂等 / 查询确定性 / 洞察口径 / 聚类与路径）；B5 随报告模块翻 enabled |
+| 基准套件 | ✅ 全部 | **B0–B5 六套件全部启用**（真值复算 / 归档幂等 / 查询确定性 / 洞察口径 / 聚类与路径 / 隐私与零外链）；`PENDING_SUITES` 已清空，全量 bench 退出码 **0** |
 | 真实浏览器库 | 🚫 永不入仓 | `.gitignore` 封死 `History*` / `*.db`，仅白名单放行 `data/fixtures/synthetic/**` |
 
 生成/复跑：
@@ -92,7 +92,7 @@
 ```bash
 py -3.12 tools/gen_synthetic_history.py            # 生成（覆盖）fixtures
 py -3.12 tools/gen_synthetic_history.py --check     # 两层断言（CI 里跑的就是这条）
-py -3.12 tools/bench.py --only B0 B1 B2 B3 B4       # 基准（门槛从 manifest 读）
+py -3.12 tools/bench.py                             # 基准（六套件全启用；门槛从 manifest 读）
 py -3.12 tools/bench.py --probe --only B0 B1 B2 B3 B4  # 可证伪探活：19 条注入缺陷必须全部被检出
 bhvault selftest --data-root data                   # 用户命令：真读台账并复算真值
 ```
@@ -174,16 +174,18 @@ bhvault selftest --data-root data                   # 用户命令：真读台�
 
 - 门槛（`min_samples_per_kind` / `counterexamples_required_per_kind` / 退出码语义）**随数据下发**在
   `manifest.bench` 里，基准运行时读取：改门槛 = 改数据 + 重生成，不改代码、留痕；
-- **未启用 ≠ 通过**：尚未交付的套件（当前 B5）在台账里登记 `enabled: false` + 原因，并按设计计入
-  退出码 1（所以 CI 跑的是 `--only B0 B1 B2 B3 B4`，每交付一个模块把对应套件翻 enabled 并加进命令行）；
+- **未启用 ≠ 通过**：曾经未交付的套件在台账里登记 `enabled: false` + 原因，并按设计计入退出码 1。
+  截至 M5 **没有任何未启用套件**（`PENDING_SUITES` 为空），全量 bench 退出码为 **0**；
+  CI 跑的是 `--only B0 B1 B2 B3 B4 B5`（显式列出，防「新套件没被任何东西跑到」）；
 - **探活打在消费处**：`tools/bench.py --probe` 逐条注入缺陷（值从盘上实读、不写死），要求基准**必须**报未达标。
   两类探活刻意分开（`plan/00` D38）：**B0 打在数据上**（取反一条真值布尔、删一行导出、抬高一类门槛、
   删掉门槛块、删一件产物）；**B1–B4 打在实现上**——
   B1：幂等计数谎报 / 覆盖计数不落库 / 快照顺手改源库；
   B2：检索写成"任一 n-gram 命中即算" / 次排序键取反 / 隐私门禁被短路；
   B3：会话边界写成 ≥ / 遗忘阈值写成 ≥ / 热力换 UTC 分桶 / 报告绕过隐私门禁；
-  B4：同分排序丢次键 / 路径跨会话串起来 / 阈值写死在代码里 / 聚类绕过隐私门禁。
-  只打数据会漏掉"代码写错但数据没动"，只打实现会漏掉"数据被改但代码照跑"；当前共 **19 条**全部被检出。
+  B4：同分排序丢次键 / 路径跨会话串起来 / 阈值写死在代码里 / 聚类绕过隐私门禁；
+  B5：私密清单被静默关闭 / 只掩码域名列而 URL 与标题漏出 / 渲染层直接 import 判定模块 / HTML 双跑不一致。
+  只打数据会漏掉「代码写错但数据没动」，只打实现会漏掉「数据被改但代码照跑」；当前共 **23 条**全部被检出。
 
 ### 3.6 合成库的结构（与真实 Chrome 库的差异，如实登记）
 
@@ -210,6 +212,7 @@ bhvault selftest --data-root data                   # 用户命令：真读台�
 | 检索（模块②，M3） | `assumptions/search.json` 的 8 条查询 + 全量规范化导出 | 命中 URL 集合逐条一致（含 2 条必须 0 命中的反例）；排序/分页/CSV 由 B2 的规则层守 |
 | 洞察（模块③，M3） | `assumptions/sessions.json` / `forgotten.json` / `heatmap.json` / `domains.json` | 44 条样本逐条一致；**统计只吃可见行**（私密 32 条不进会话数/分母/热力），**覆盖区间按全量行**——实测可见口径 272 个会话 vs 全量 288 个（`plan/00` D43） |
 | 聚类（模块④，M4） | `assumptions/topics.json` / `paths.json` | 主题 8 条（含 2 反例：`df < min_df` 必须丢弃）+ 路径 5 条（含 1 反例：跨会话不得串）逐条一致；**词表 93 / 丢弃 141 / 与私密主机同形被挡 1**；簇 54 个、路径 272 条（= 可见口径会话数） |
+| 报告层（模块⑤，M5） | `assumptions/privacy.json` 的 8 条（含 3 条形似反例）+ 排除 32 / 打码 9 的计数 | 分类逐条一致；**四条输出通路**（`report.json` / 人读文本 / `report.html` / `search.csv`）私密主机零出现、敏感只以掩码出现；HTML 零外链（从严档）；`report.html` 双跑逐字节一致；私密走到渲染出口即报错（fail-closed） |
 
 **"统计只吃可见行"与"覆盖区间按全量行"也不是矛盾**（`plan/00` D43）：前者是"私密连统计都不进"（K26），
 后者回答的是"档案本身覆盖了哪些天"——若按可见行算，被私密访问占满的那几天会被谎报成"没有数据"。

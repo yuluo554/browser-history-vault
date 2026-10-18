@@ -52,8 +52,11 @@ jobs:
       # 边界推导 / 打乱输入 / 下钻对账 / 隐私零出现（规则驱动）。
       # B4（聚类与路径）随聚类模块在 M4 启用：真跑聚类链路，主题词族 8 + 路径 5 逐条点名；
       # 规则层考复跑一致 / 打乱输入 / 同分同序 / 阈值取自配置 / 会话口径同源 / 下钻 / 隐私。
+      # B5（隐私与零外链）随报告模块在 M5 启用：查四条输出通路（report.json / 人读文本 /
+      # report.html / search.csv）的私密零出现、敏感打码、零外链从严档、渲染层 AST 三条、
+      # HTML 双跑逐字节、私密 fail-closed。
       - name: 基准（已启用套件；门槛从 manifest 读）
-        run: python tools/bench.py --only B0 B1 B2 B3 B4
+        run: python tools/bench.py --only B0 B1 B2 B3 B4 B5
 
       # 这一步覆盖裸 console script 通路：`python -m <pkg>` 与裸 `<pkg>` 的 sys.path
       # 来源不同，"前者过了"证明不了"后者能跑"（安装面第四面）。--require-console-script

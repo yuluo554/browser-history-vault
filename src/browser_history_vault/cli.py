@@ -42,7 +42,10 @@ from .exit_codes import (
 )
 from .insight import InsightError, build_report, render_report
 from .normalizer import NormalizeError, normalize_database
+from .notice import announce as announce_first_run
 from .privacy import PrivacyError
+from .report import ReportError, ReportMeta, build_page, render_page
+from .serialize import write_bytes_atomic, write_json
 from .search import (
     DEFAULT_ORDER,
     ORDER_KEYS,
@@ -53,7 +56,6 @@ from .search import (
     write_csv as write_search_csv,
 )
 from .selftest import render_report as render_selftest_report, run_selftest
-from .serialize import write_json
 from .sessions import SessionError
 from .snapshot import (
     SnapshotError,
@@ -62,7 +64,7 @@ from .snapshot import (
     detect_sources,
     take_snapshot,
 )
-from .storage import StorageError, connect_readonly, visit_view_rows
+from .storage import StorageError, archive_rows as storage_archive_rows, connect_readonly, visit_view_rows
 from .timeutil import datetime_to_us
 
 PROG = "bhvault"
@@ -91,6 +93,7 @@ _INPUT_ERRORS = (
     SearchError,
     InsightError,
     ClusterError,
+    ReportError,
     SessionError,
     OSError,
     ValueError,
@@ -281,8 +284,9 @@ def _add_report_arguments(subparsers, common, name) -> None:
     sub = _new_parser(
         subparsers,
         name,
-        "行为洞察（**数据层**）：覆盖区间与缺口、频次榜、域名集中度、时段热力、会话、遗忘的宝藏。"
-        "口径全部取自配置文件，报告里回显实际取值；单文件 HTML 页面在后续版本交付。",
+        "行为洞察：覆盖区间与缺口、频次榜、域名集中度、时段热力、会话、遗忘的宝藏、"
+        "主题聚类与研究路径。`--html` 额外生成**单文件 HTML 报告**（样式内联、零外链、"
+        "断网可读）。口径全部取自配置文件，报告里回显实际取值。",
         common,
     )
     _add_archive_db_argument(sub)
@@ -290,7 +294,19 @@ def _add_report_arguments(subparsers, common, name) -> None:
         "--out-dir",
         metavar="DIR",
         default=DEFAULT_OUT_DIR,
-        help="输出目录（写 report.json；默认 %s）" % DEFAULT_OUT_DIR,
+        help="输出目录（写 report.json；`--html` 时另写 report.html；默认 %s）" % DEFAULT_OUT_DIR,
+    )
+    sub.add_argument(
+        "--html",
+        action="store_true",
+        help="生成单文件 HTML 报告 `<out-dir>/report.html`（零外链、无脚本、确定性）",
+    )
+    sub.add_argument(
+        "--path-limit",
+        metavar="N",
+        type=int,
+        default=None,
+        help="HTML 报告里最多展示多少条研究路径（省略 = 沿用 report.top_n）",
     )
     sub.add_argument(
         "--at-us",
@@ -549,6 +565,15 @@ def _read_archive_rows(archive_db: Path):
         connection.close()
 
 
+def _read_archive_provenance(archive_db: Path):
+    """只读读回归档库的 `archives` 行（报告头的"归档来源与时间"，K25）。"""
+    connection = connect_readonly(archive_db)
+    try:
+        return tuple(storage_archive_rows(connection))
+    finally:
+        connection.close()
+
+
 _MISSING_ARCHIVE_NOTE = "归档库尚不存在：先跑一次 bhvault archive --browser-dir <浏览器库目录>"
 
 
@@ -642,6 +667,12 @@ def _cmd_report(args: argparse.Namespace) -> int:
             sys.stdout.write("== bhvault report ==\n%s\n" % _MISSING_ARCHIVE_NOTE)
         return EXIT_DEGRADED
 
+    # 首启隐私说明：只在**首次运行 report** 时打印一次，标记写用户主目录（写不进去不算失败）。
+    notice = announce_first_run()
+    if notice["lines"]:
+        for line in notice["lines"]:
+            sys.stderr.write(line + "\n")
+
     now_us = int(args.at_us) if args.at_us is not None else _now_us()
     rows = _read_archive_rows(archive_db)
     document = dict(
@@ -655,11 +686,27 @@ def _cmd_report(args: argparse.Namespace) -> int:
         exists=True,
     )
     write_json(out_dir / "report.json", document)
+    html_path = out_dir / "report.html"
+    if args.html:
+        page = build_page(
+            rows,
+            config=config,
+            meta=ReportMeta(
+                archive_db=str(archive_db),
+                config_path=str(loaded.path),
+                now_us=now_us,
+                archives=_read_archive_provenance(archive_db),
+            ),
+            path_limit=args.path_limit,
+        )
+        write_bytes_atomic(html_path, render_page(page).encode("utf-8"))
     if args.json:
         _emit_machine(json_bytes(document))
         return EXIT_OK
     sys.stdout.write(render_report(document))
     sys.stdout.write("结构化结果：%s\n" % (out_dir / "report.json"))
+    if args.html:
+        sys.stdout.write("单文件 HTML 报告：%s（零外链，断网可打开）\n" % html_path)
     return EXIT_OK
 
 

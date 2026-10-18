@@ -37,21 +37,29 @@ def _capture(argv, registry=None):
     return code, buffer.getvalue()
 
 
+ALL_SUITES = ("B0", "B1", "B2", "B3", "B4", "B5")
+
+
 def test_only_enabled_suites_exit_zero():
-    code, text = _capture(["--only", "B0", "B1", "B2", "B3", "B4"])
+    code, text = _capture(["--only"] + list(ALL_SUITES))
     assert code == bench.EXIT_OK
-    for suite in ("B0", "B1", "B2", "B3", "B4"):
+    for suite in ALL_SUITES:
         assert "[达标] %s" % suite in text
     assert "[FAIL]" not in text
 
 
-def test_running_every_suite_exits_one_because_of_pending_suites():
-    """未启用套件要计入退出码 1，但文案必须与"未达标"可区分。"""
+def test_running_every_suite_now_exits_zero():
+    """M5 的反向证据：`PENDING_SUITES` 已清空，**全量跑必须是 0**（不是靠 --only 才绿）。
+
+    这条曾经断言"退出码 1 + 未启用文案"（那时 B5 还没交付）。B5 翻启用后，
+    留在旧形态就会变成"这道门永远绿"——所以同一提交里把它翻转成反向断言。
+    """
     code, text = _capture([])
-    assert code == bench.EXIT_NOT_MET
-    assert "未启用" in text
+    assert code == bench.EXIT_OK, text
     assert "未达标 0" in text
-    assert "未启用 ≠ 通过" in text
+    assert "未启用 0" in text
+    for suite in ALL_SUITES:
+        assert "[未启用] %s" % suite not in text
 
 
 def test_unknown_suite_is_a_usage_error():
@@ -61,15 +69,15 @@ def test_unknown_suite_is_a_usage_error():
 
 
 def test_json_output_is_machine_readable_and_deterministic():
-    first_code, first = _capture(["--only", "B0", "B1", "B2", "B3", "B4", "--json"])
-    second_code, second = _capture(["--only", "B0", "B1", "B2", "B3", "B4", "--json"])
+    first_code, first = _capture(["--only"] + list(ALL_SUITES) + ["--json"])
+    second_code, second = _capture(["--only"] + list(ALL_SUITES) + ["--json"])
     assert first_code == second_code == bench.EXIT_OK
     assert first == second
     document = json.loads(first)
     assert document["exit_code"] == bench.EXIT_OK
     assert document["totals"]["fail"] == 0
     suites = {item["suite"]: item for item in document["suites"]}
-    for suite in ("B0", "B1", "B2", "B3", "B4"):
+    for suite in ALL_SUITES:
         assert suites[suite]["status"] == "pass"
     assert {check["code"] for check in suites["B0"]["checks"]} >= {
         "thresholds-read", "sample-quota", "truth-recompute", "data-ledger",
@@ -90,25 +98,31 @@ def test_json_output_is_machine_readable_and_deterministic():
         "sample-topics", "sample-paths", "rule-tie-ordering", "rule-thresholds-from-config",
         "rule-session-single-source", "rule-drilldown-resolvable", "rule-cluster-privacy",
     }
+    assert {check["code"] for check in suites["B5"]["checks"]} >= {
+        "sample-privacy-classification", "sample-privacy-counts",
+        "rule-private-zero-appearance", "rule-sensitive-masked", "rule-zero-external-links",
+        "rule-render-layer-zero-judgement", "rule-html-repeatable", "rule-private-fail-closed",
+    }
 
 
-def test_pending_suites_are_declared_in_the_ledger_and_surfaced():
-    code, text = _capture([])
-    assert code == bench.EXIT_NOT_MET
-    assert "B5" in text
-    assert "尚未交付" in text
+def test_no_suite_is_left_pending_in_the_ledger():
+    """M5 收尾：台账里**没有任何**未启用套件（"删干净"而不是"少一条"）。"""
+    manifest = bench.load_manifest(FIXTURE_DIR)
+    pending = [suite for suite in bench.SUITE_ORDER
+               if not manifest["bench"]["suites"][suite].get("enabled")]
+    assert pending == [], "仍有未启用套件：%s" % pending
 
 
 def test_delivered_suites_are_no_longer_pending():
-    """M4 的反向证据：已启用的 B2/B3/B4 必须**不在**待办里（"退役"要在数据侧留痕）。"""
+    """M4/M5 的反向证据：已启用的 B2/B3/B4/B5 必须**不在**待办里（退役要在数据侧留痕）。"""
     code, text = _capture([])
-    for suite in ("B2", "B3", "B4"):
+    for suite in ("B2", "B3", "B4", "B5"):
         assert "[未启用] %s" % suite not in text
         assert "[达标] %s" % suite in text
 
 
 def test_probe_detects_every_injected_defect():
-    code, text = _capture(["--probe", "--only", "B0", "B1", "B2", "B3", "B4"])
+    code, text = _capture(["--probe", "--only"] + list(ALL_SUITES))
     assert code == bench.EXIT_OK, text
     expected = (
         len(bench.PROBE_MUTATIONS)
@@ -116,6 +130,7 @@ def test_probe_detects_every_injected_defect():
         + len(bench.B2_PROBE_NAMES)
         + len(bench.B3_PROBE_NAMES)
         + len(bench.B4_PROBE_NAMES)
+        + len(bench.B5_PROBE_NAMES)
     )
     assert text.count("[PASS]") == expected, "探活条数与清单不符（清单与实际没对齐）"
     assert "0 条未被检出" in text
@@ -123,7 +138,7 @@ def test_probe_detects_every_injected_defect():
 
 @pytest.mark.parametrize(
     "names,suite",
-    [(None, "B1"), (None, "B2"), (None, "B3"), (None, "B4")],
+    [(None, "B1"), (None, "B2"), (None, "B3"), (None, "B4"), (None, "B5")],
 )
 def test_implementation_probes_target_their_own_suite(names, suite):
     """每一组实现侧探活都必须能被它自己那个套件抓到（不是被别的套件顺手抓到）。"""
@@ -133,7 +148,7 @@ def test_implementation_probes_target_their_own_suite(names, suite):
         assert "probe-%s" % name in text
 
 
-@pytest.mark.parametrize("suite", ["B1", "B2", "B3", "B4"])
+@pytest.mark.parametrize("suite", ["B1", "B2", "B3", "B4", "B5"])
 def test_probe_names_are_non_empty(suite):
     """探活清单非空（空清单会让"逐条注入"变成什么都没注入）。"""
     assert len(getattr(bench, "%s_PROBE_NAMES" % suite)) >= 3
@@ -185,8 +200,8 @@ def test_bench_leaves_the_fixture_untouched():
         }
 
     before = snapshot()
-    assert _capture(["--only", "B0", "B1", "B2", "B3", "B4"])[0] == bench.EXIT_OK
-    assert _capture(["--probe", "--only", "B0", "B1", "B2", "B3", "B4"])[0] == bench.EXIT_OK
+    assert _capture(["--only"] + list(ALL_SUITES))[0] == bench.EXIT_OK
+    assert _capture(["--probe", "--only"] + list(ALL_SUITES))[0] == bench.EXIT_OK
     after = snapshot()
     assert before.keys() == after.keys(), "基准跑完后 fixtures 的文件集合变了"
     assert {k: v[0] for k, v in before.items()} == {k: v[0] for k, v in after.items()}, "基准改动了冻结产物的字节"
@@ -241,11 +256,13 @@ def test_only_whitelist_matches_the_ledger_suites():
     assert set(bench.SUITE_RUNNERS) <= declared
 
 
-@pytest.mark.parametrize("suite", ["B5"])
-def test_pending_suite_cannot_be_probed(suite):
-    """未启用套件不能被探活"顺便放行"：它没有实现，探活只对已启用套件有意义。"""
-    runner = bench.SUITE_RUNNERS.get(suite)
-    assert runner is None, "%s 未启用却已经有实现了：请把它翻成 enabled 并补探活" % suite
+def test_no_pending_suite_is_left_without_a_runner():
+    """台账全启用后，每个套件都该有实现；"没有 runner"的状态**不再允许存在**。
+
+    这条原来是 `test_pending_suite_cannot_be_probed`（断言 B5 没有 runner）。
+    B5 交付时必须同批改写，否则它会因为它守的那个状态已消失而静默失效（E32）。
+    """
+    assert set(bench.SUITE_ORDER) <= set(bench.SUITE_RUNNERS)
 
 
 def test_every_enabled_suite_has_a_runner():

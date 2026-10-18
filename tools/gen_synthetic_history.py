@@ -180,10 +180,8 @@ BENCH_COUNTEREXAMPLES_REQUIRED_PER_KIND = 1
 #: 每交付一个模块就把它从本表**移出**并登记进下面的 `ENABLED_SUITES`（**移除即登记**：
 #: 只在一边出现，CI 的 `test_every_enabled_suite_is_actually_run_by_ci` 会盯）。
 #: B1（归档）在 M2 移出；B2（查询确定性）/ B3（洞察口径）在 M3 移出；
-#: B4（聚类与路径）在 M4 移出。
-PENDING_SUITES: Dict[str, Dict[str, str]] = {
-    "B5": {"title": "隐私与零外链", "reason": "报告模块尚未交付；隐私真值已就位"},
-}
+#: B4（聚类与路径）在 M4 移出；B5（隐私与零外链）在 M5 移出——**本表自此为空**。
+PENDING_SUITES: Dict[str, Dict[str, str]] = {}  # 全部套件已启用：全量 bench 的退出码应为 0
 
 #: 已启用套件（门槛/门槛形状随数据下发；改这里 = 改数据 + 重生成）。
 #: B1 的门槛是"归档幂等"这条口径的**可测量形态**：连跑两次的第二次新增必须为 0。
@@ -218,6 +216,15 @@ ENABLED_SUITES: Dict[str, Dict[str, Any]] = {
         "notes": "样本驱动：主题词族 8（含 2 反例：df < min_df 必须丢弃）/ 路径 5（含 1 反例：跨会话不得串）逐条点名；"
                  "规则驱动：复跑逐字段一致 / 打乱输入不变 / 同分同序（显式次键）/ 阈值取自配置且可见 / "
                  "会话口径单点同源 / 路径间隔边界 / visit_id 下钻对账 / 输出面零私密零原主机名",
+    },
+    "B5": {
+        "title": "隐私与零外链（报告层：私密零出现 / 敏感打码 / 零外链 / 渲染层零判定）",
+        "min_detection_rate": 1.0,
+        "max_false_positive": 0.0,
+        "notes": "样本驱动：隐私真值 8 条（含 3 条形似反例）+ 排除/打码计数逐条点名（单位 = 访问记录数）；"
+                 "规则驱动：把伪造的私密域名注入四条通路（report.json / 人读文本 / report.html / search.csv）"
+                 "后私密零出现 / 敏感只以掩码出现 / HTML 零外链（从严档）/ 渲染层 AST 三条 / HTML 双跑逐字节 / "
+                 "私密走到渲染出口即报错（fail-closed）",
     },
 }
 

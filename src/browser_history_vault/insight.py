@@ -249,6 +249,18 @@ def _bucket_key(key: str) -> Tuple[int, int]:
     return (int(weekday), int(hour))
 
 
+def spark_level(count: int, maximum: int) -> int:
+    """把计数折算成 0–9 的**展示等级**（0 = 无数据）。
+
+    刻意放在数据层而不是渲染层：渲染层的 K16 守门禁止算术（`BinOp`），
+    而"这一格该多深"本身就是一条口径（同一档案两次渲染必须同等级）。
+    """
+    if count <= 0 or maximum <= 0:
+        return 0
+    level = int(round(9.0 * count / maximum))
+    return max(1, min(9, level))
+
+
 def heatmap_block(
     rows: Sequence[Dict[str, Any]], *, offset_minutes: int, weekday_start: str
 ) -> Dict[str, Any]:
@@ -260,14 +272,17 @@ def heatmap_block(
     busiest = sorted(
         (item for item in flat if item[2] > 0), key=lambda item: (-item[2], item[0], item[1])
     )[:5]
+    maximum = max(buckets.values()) if buckets else 0
     return {
         "weekday_start": start,
         "weekday_names": names,
         "hours": list(range(24)),
         "buckets": buckets,
         "matrix": matrix,
+        # 展示等级（0–9）：渲染层直接消费，不自己算（K16 渲染层零算术）。
+        "levels": [[spark_level(value, maximum) for value in row] for row in matrix],
         "total_visits": sum(buckets.values()),
-        "max_bucket_visits": max(buckets.values()) if buckets else 0,
+        "max_bucket_visits": maximum,
         "busiest": [
             {"weekday": weekday, "weekday_name": names[weekday], "hour": hour, "visits": count}
             for weekday, hour, count in busiest
