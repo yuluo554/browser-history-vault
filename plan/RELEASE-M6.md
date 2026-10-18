@@ -16,20 +16,33 @@
 | 项 | 值 | 验证方式 |
 |---|---|---|
 | tag | `v0.1.0`（annotated） | `git cat-file -t v0.1.0` = `tag` |
-| 目标提交 | ⬜（打 tag 时回填短 sha） | `git rev-parse v0.1.0^{commit}` |
+| 目标提交 | ⬜ **tag 后回填**（tag 指向的提交 sha 在打 tag 那一刻才存在；写进 tag 树就是不动点自指） | `git rev-parse v0.1.0^{commit}`（登记在 §2） |
 | `__version__` | `0.1.0` | `src/browser_history_vault/__init__.py`（pyproject 以 dynamic 读取，无第二份） |
 | README 状态行 | `状态：已发布（v0.1.0）` | `tests/test_release_gate.py` 的 `TAG_README` 项 |
 | Release 名 | `v0.1.0` | `gh release view v0.1.0 --json tagName` |
-| 本地提交数 | ⬜（提交后回填） | `git rev-list --count HEAD` |
+| 本地提交数 | 10（打 tag 前） | `git rev-list --count HEAD` |
 | 工作树 | 干净 | `git status --porcelain` 为空 |
 
 **四处一致**（tag / `pyproject` 动态版本 / `__version__` / README 状态行）在打 tag 前逐项核对。
 
 ### 1.2 干净 clone 复核（阶段 A 第 3 条）
 
-⬜ 待执行。判定口径（**不是"本机能跑"**）：`git clone --no-local <repo> <临时目录>` +
-全新 `venv` + `pip install -e ".[dev]"` + 全量 pytest + 按 README 快速开始逐条跑。
-本机开发环境装过的 extras 会掩盖缺口，只有干净 clone 能暴露。
+✅ 已执行。判定口径（**不是"本机能跑"**）：`git clone --no-local <repo> <临时目录>` +
+全新 `venv`（`py -3.12 -m venv`）+ `pip install -U pip` + `pip install -e ".[dev]"` + 全量 pytest
++ 按 README 快速开始逐条跑。
+
+| 步骤 | 结果 |
+|---|---|
+| clone | 落 `51f5e1a`（发布准备提交） |
+| 安装 | `bhvault --version` → `bhvault 0.1.0` |
+| 全量 pytest | **418 passed**（56.5s） |
+| README 快速开始 10 条 | `config` 0 / `selftest` 0 / `snapshot` 0 / `archive` 0 / `archive`（二跑）0 / `status` 0 / `search` 0 / `report` 0 / `report --html` 0 / `cluster` 0 |
+| 归档幂等 | 二跑 `写入 0 条 / 重复 325` |
+| 产物 | `archive.db` / `snapshot.json` / `search.csv` / `search.json` / `report.json` / `report.html`(81,626) / `cluster.json` 齐备 |
+
+> 第一轮实测踩到一条**文档形态**问题：先显式给了 `--archive-db` 再跑不带该参数的 `search`/`report`，
+> 两端指向不同库 → 退出码 1（"归档库尚不存在"）。README 的快速开始是"一路不带 `--archive-db`"
+> 的一致口径，按原文逐字跑即 10/10 通过。**判据 = 按 README 的形式跑，不是按我习惯的形式跑。**
 
 ### 1.3 脱敏四步（阶段 A 第 4 条）
 
@@ -90,13 +103,14 @@
 
 | 证据项 | 命令 | 结果 |
 |---|---|---|
-| 全量测试（3.12） | `py -3.12 -m pytest` | ⬜ 回填 |
-| 全量测试（3.8，底线解释器） | `py -3.8 -m pytest` | ⬜ 回填 |
-| 生成器两层断言 | `py -3.12 tools/gen_synthetic_history.py --check` | ⬜ 回填 |
-| 基准（六套件） | `py -3.12 tools/bench.py` | ⬜ 回填 |
-| 基准探活 | `py -3.12 tools/bench.py --probe` | ⬜ 回填 |
-| 离线 CLI 冒烟（两条通路） | `.venv/Scripts/python tools/smoke_cli.py --require-console-script` | ⬜ 回填 |
-| 发布终态门禁 | `py -3.12 tools/check_release.py .` | ⬜ 回填（终态须无 FAIL） |
+| 全量测试（3.12） | `py -3.12 -m pytest` | **418 passed**（71.0s） |
+| 全量测试（3.8，底线解释器） | `py -3.8 -m pytest` | **418 passed**（86.3s） |
+| 全量测试（venv 安装面） | `./.venv/Scripts/python -m pytest` | **418 passed**（66.2s） |
+| 生成器两层断言 | `py -3.12 tools/gen_synthetic_history.py --check` | **22 PASS / 0 FAIL**（3.8 同） |
+| 基准（六套件） | `py -3.12 tools/bench.py` | 退出码 **0**（达标 6 / 未达标 0 / 未启用 0） |
+| 基准探活 | `py -3.12 tools/bench.py --probe` | **23 条探活中 0 条未被检出** |
+| 离线 CLI 冒烟（两条通路） | `.venv/Scripts/python tools/smoke_cli.py --require-console-script` | **64 PASS / 0 FAIL / 0 SKIP** |
+| 发布终态门禁（离线） | `py -3.12 tools/check_release.py . --no-gh` | 准备期如实记：`TAG_EXISTS` FAIL（tag 尚未打，符合预期）+ `TRACKED_LEAK` PASS；终态见 §2 |
 
 ---
 

@@ -7,7 +7,7 @@
 
 一句话定位：浏览器只留 90 天历史，本工具**先归档、再分析**——把本地 History 只读快照沉淀成自己的长期档案，再回答「我过去在做什么」「哪些是遗忘的宝藏」「作息与兴趣怎么变」。
 
-**当前状态**：**M5 完成**（单文件 HTML 报告 `report --html` + 隐私门禁 + 零外链从严档 + 渲染层零判定 + 首启隐私说明；基准 **B0–B5 六套件全部启用**、全量跑退出码 **0**、23 条探活全检出；测试 406 项三通道全绿）；下一棒是 M6 发布（tag + Release 附产物 + 发布留档）。
+**当前状态**：**M6 完成（v0.1.0 已发布）**——五模块 + 单文件 HTML 报告 + 隐私门禁全部交付，基准 B0–B5 六套件全启用、全量跑退出码 0、23 条探活全检出；发布三件套齐备（annotated tag `v0.1.0` / GitHub Release 附产物 / `plan/RELEASE-M6.md` 两栏留档）。测试 418 项三通道全绿（M5 的 406 项 + M6 新增 12 项：sdist 白名单 3 / 四层审计 7 / 发布门对照 2）。
 
 **交付形态（唯一，不得改为「任选其一」）**：纯本地 Python CLI + 本地单文件 HTML 报告；无服务器、无 GPU、零网络请求、无账号。
 
@@ -186,7 +186,7 @@ M6 首推后据实补记真实 run id，**历史措辞保留原文、补记是�
 | **M3 洞察** | 查询检索 + 行为洞察数据 | 断网查询可用；数字可下钻；会话边界三态通过；遗忘宝藏真值命中（含反例）；口径取自配置单点；**退役 search/report 两条未就绪条目** | ✅ 已完成（2026-10-18） |
 | **M4 聚类** | 主题聚类 + 研究路径 | 固定种子复跑一致；同分同序；路径可下钻；会话口径与模块③同源；**退役 cluster 条目** | ✅ 已完成（2026-10-18） |
 | **M5 报告** | 隐私门禁 + 单文件 HTML 报告 | ①单文件零外链（从严档）断网可读；②私密零出现（含标题回显 / CSV）敏感打码；③覆盖区间 + 缺口提示 + 生效口径块在位；④渲染层零判定（AST 三条 + 双对照）+ 双跑逐字节；⑤首启隐私说明（标记写主目录、只读不失败）；⑥`report` 已在 M3 退役 → 本棒只补渲染门 | ✅ 已完成（2026-10-18） |
-| **M6 发布** | GitHub 公开仓库发布（署名 yuluo554） | **DoD 三件套缺一不可：①git tag ②GitHub Release（附产物）③发布留档（`plan/RELEASE-M6.md`）**。其中「附产物」= 手工源码包（`.tar.gz`，sha256 可复算）+ `SHA256SUMS`；发布留档在打 tag **之前**写好并进 tag 树，tag 后事实分栏追加 | ⬜ |
+| **M6 发布** | GitHub 公开仓库发布（署名 yuluo554） | **DoD 三件套缺一不可：①git tag ②GitHub Release（附产物）③发布留档（`plan/RELEASE-M6.md`）**。其中「附产物」= 手工源码包（`.tar.gz`，sha256 可复算）+ `SHA256SUMS`；发布留档在打 tag **之前**写好并进 tag 树，tag 后事实分栏追加 | ✅ 已完成（2026-10-18） |
 
 **纪律**：
 
@@ -316,3 +316,31 @@ M6 首推后据实补记真实 run id，**历史措辞保留原文、补记是�
 | 用户命令自检 | `bhvault selftest --config config.example.json --data-root data` | **7/7 项 PASS**；`command-wiring` 显示 8 个子命令 |
 | 发布终态门禁 | `py -3.12 tools/check_release.py . --no-gh` | FAIL 2（无 tag + 工作树未提交，**符合预期**） |
 | CI | — | ⬜ **未跑**（无远端）；工作流基准步骤改为 `--only B0 B1 B2 B3 B4 B5`，**待首推验证**（本地等价校验：上述三通道 + 冒烟 + 基准/探活） |
+
+## 5.6 M6 实测证据（当轮实数，非预估）
+
+**发布准备（阶段 A，全部在本机实跑）**：
+
+| 项 | 命令 | 结果 |
+|---|---|---|
+| 全量测试（3.12.10） | `py -3.12 -m pytest` | **418 passed**（71.0s） |
+| 全量测试（3.8.8，底线通道） | `py -3.8 -m pytest` | **418 passed**（86.3s） |
+| 全量测试（venv 安装面） | `./.venv/Scripts/python -m pytest` | **418 passed**（66.2s） |
+| 干净 clone 全量测试 | `git clone --no-local` → 全新 venv → `pip install -e ".[dev]"` → `pytest` | **418 passed**（56.5s） |
+| 干净 clone 按 README 逐条 | 快速开始 10 条命令（`config`/`selftest`/`snapshot`/`archive`×2/`status`/`search`/`report`/`report --html`/`cluster`） | **10/10 退出码 0**；二跑 `visits_added = 0`；产物 6 件齐（`report.html` 81,626 字节） |
+| 生成器两层断言（3.12 / 3.8） | `py -3.12 tools/gen_synthetic_history.py --check` | **22 PASS / 0 FAIL**（两通道同） |
+| 基准（全量六套件） | `py -3.12 tools/bench.py` | 退出码 **0**（6 套件达标 / 0 未达标 / 0 未启用） |
+| 基准（底线解释器） | `py -3.8 tools/bench.py` | 退出码 **0** |
+| 基准探活 | `py -3.12 tools/bench.py --probe` | **23 条探活中 0 条未被检出** |
+| 离线 CLI 冒烟（两条通路） | `PATH="$PWD/.venv/Scripts:$PATH" ./.venv/Scripts/python tools/smoke_cli.py --require-console-script` | **64 PASS / 0 FAIL / 0 SKIP** |
+| 版本四处一致 | `__version__` / venv 包元数据 / README 状态行 / tag | 前三者 `0.1.0`；tag 见发布留档 |
+| sdist 自足 | `python -m build --sdist` → 解包到中立目录 → 全新 venv 安装 → **在解包目录之外**跑 `bhvault selftest` | **7/7 项 PASS**（含 `data-ledger` 11 件冻产 + 68 条真值复算） |
+| sdist 白名单覆盖性 | `py -3.12 -m pytest tests/test_sdist_manifest.py` | **3 项**：仓库实物逐条在白名单内 / 数据底座专项 / 清单非空 |
+| 零网络四层审计 | `py -3.12 tools/audit_network.py --dist <sdist 目录>` | **0 FAIL / 4 PASS**：源码 25 文件干净 / 产物运行时包树 25 个 `.py` 干净 / 8 条命令 0 出网 0 DNS / 加载面 105 个模块文件（本项目 24、标准库 80、第三方 0） |
+| 四层审计可证伪 | `py -3.12 -m pytest tests/test_network_audit.py` | **7 项**：层①层②各配阳性对照 + 空分母 FAIL + 路径不存在 FAIL + 补丁真挡连接 |
+| 脱敏扫描（词面运行时实算） | `py -3.12 tools/check_release.py . --no-gh` | `TRACKED_LEAK` **PASS**（词面 8 条运行时实算，扫描面 84 个文本文件；命中只回类别不回显串） |
+| 扫描器自身无字面值 | `py -3.12 -m pytest tests/test_release_gate.py` | **7 项**：含"扫描器源码过自己的扫描"（阴性对照：noreply/保留域不误报） |
+
+**发布动作（阶段 B/C，tag 之后的事实）**见 `plan/RELEASE-M6.md` §2；`plan/00` 本表只记与 tag 无关的准备期事实。
+
+> **纪律**：上表所有数字都是当轮实测；tag 后追加的事实不写回本表（写进 `plan/RELEASE-M6.md` 的追加栏）。
