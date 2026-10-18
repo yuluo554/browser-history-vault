@@ -77,18 +77,38 @@
 
 | 附件 | 形态 | sha256 |
 |---|---|---|
-| `browser-history-vault-0.1.0.tar.gz` | `git archive --format=tar --prefix=... v0.1.0 \| gzip -9n` | 见 §2「tag 后追加事实」（**不动点自指**：digest 写进 tag 树就改变了 tag 树） |
+| `browser-history-vault-0.1.0.tar.gz` | `git archive --format=tar --prefix=... <tag> \| gzip -9n` | 见 §2「tag 后追加事实」（**不动点自指**：digest 写进 tag 树就改变了 tag 树） |
 | `SHA256SUMS` | `sha256sum <附件> > SHA256SUMS` | 随附件一起上传 |
 | `report.html` | 合成数据生成的单文件 HTML 样例（`--at-us 13436683200000000`） | 同上 |
 
 同 tag 重复构建 sha256 相同（`gzip -9n` 抹掉时间戳与文件名）——这是不用 GitHub 自动
 "Source code" 包的理由：自动包的字节不承诺稳定。
 
+**实测（准备期，针对 `aded08e`）**：
+
+| 项 | 结果 |
+|---|---|
+| 重复构建逐字节一致 | ✅ 两次 `git archive HEAD \| gzip -9n` 的 `cmp` **IDENTICAL**，sha256 相同 |
+| 归档树含发布留档 | ✅ `tar tzf` 命中 `MANIFEST.in` / `config.example.json` / `plan/RELEASE-M6.md` / `tools/audit_network.py` |
+| 解包树可跑（**解包目录之外**） | ✅ 全新 venv 安装 → `bhvault selftest` **7/7**；`archive` 退出 0；`report --html` 退出 0 |
+| HTML 样例零外链 | ✅ `http://` 0 / `https://` 0 / `//` 0；83,203 字节；无本机用户目录绝对路径 |
+| 样例生成方式 | 在**中立的示意目录**（非本机项目目录）跑 `archive`×3 + `report --html`，使报告里记录的"配置来源"落在示意路径上，而非开发机路径 |
+
 ### 1.7 CI
 
-⬜ 待首推。预期：`{ubuntu, windows} × {3.8, 3.12}` 四矩阵；branch push 与 tag push 各产生一条 run
-（同 sha 两条合法，两条都要绿）。**首跑失败照录不抹除**，失败原因与修复提交如实配对。
-真实 run id 与结论在首推后回填到本节（属于 tag 前事实）。
+✅ 首推即绿（**零诊断轮**）。远端仓库先建为 **private**，CI 绿后才切 public（顺序见 `plan/07` §3）。
+
+| 项 | 值 |
+|---|---|
+| workflow | `.github/workflows/ci.yml`；矩阵 `{ubuntu-latest, windows-latest} × {3.8, 3.12}` |
+| branch push run id | `39094087217`（head sha `aded08e`） |
+| 结论 | **success**；四个 job 逐条 success：`py3.8 on windows-latest` / `py3.8 on ubuntu-latest` / `py3.12 on ubuntu-latest` / `py3.12 on windows-latest` |
+| 步骤 | 打包工具链 / 安装 `.[dev]` / 全量测试 / 生成器两层断言 / 基准 `--only B0 B1 B2 B3 B4 B5` / 离线 CLI 冒烟（两条通路） |
+| tag push run | ⬜ tag 后回填（同 sha 两条 run 是合法的，两条都要绿） |
+| 首跑失败 | 无（照录：本轮没有失败轮次，也没有"修完才绿"的修复提交） |
+
+> 注解只有一条与代码无关的提示：`actions/checkout@v4` / `setup-python@v5` 的 Node 20 弃用告警。
+> 它不影响结论，也不改判据——记录在此是为了让后来者不必重新判断"这是不是问题"。
 
 ### 1.8 DoD 逐项
 
