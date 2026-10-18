@@ -22,8 +22,8 @@
 | **K14** | 遗忘的宝藏 = ①最后访问距"今天"天数**严格大于** `days_threshold` ②总访问 ≥ `min_visits` ③访问跨越 ≥ `min_distinct_days` 个日期 ④不在私密/敏感清单；**报告显示实际取值**；无数据 → `not_assessed`（不输出 compliant） | `insight.forgotten_state` / `forgotten_block`（M3 落地）；报告 `forgotten.thresholds` + `effective_config`；真值 `assumptions/forgotten.json`（16 条含 10 反例） |
 | **K15** | 聚类确定性：固定种子（配置）+ 确定性排序（同分同序）+ 阈值在报告可见 | 模块④（M4 落地）：`cluster.term_rank_key`（权重降序 + 词面升序）/ `thresholds_of`（阈值回显）；`tests/test_cluster_command.py`；基准 B4 的 `rule-tie-ordering` / `rule-thresholds-from-config`。细化口径见 K32 |
 | **K16** | 报告**渲染层零判定**（AST 三条：不 import 引擎 / 无 `BinOp` / 无内联阈值）+ **零外链取从严档**（`http`/`https`/`//` 全判红，故文案注释 CSS 里不许出现 `//`）；断言常驻渲染出口 | 模块⑤（**M5 落地**）：`render.py`（只 import 标准库 `html`，零 `BinOp`、零数值字面量）+ `render_gate.py`（两条出口断言 + AST 三条 + 双对照）；`tests/test_report_html.py`；基准 B5 的 `rule-zero-external-links` / `rule-render-layer-zero-judgement` / `rule-html-repeatable` |
-| **K17** | 零网络四层审计（①源码 import 面 ②发布产物 ③动态拦截 ④加载面）；**措辞与已落地的层对齐**（当前只落 ①③ → README 写"本项目代码不含任何网络调用路径"） | `netguard.py` + README |
-| **K18** | 源码优先交付：`data/` 不进安装包；sdist 需 `MANIFEST.in` 白名单才自足 | `pyproject.toml`；M6 验证 |
+| **K17** | 零网络四层审计（①源码 import 面 ②发布产物 ③动态拦截 ④加载面）；**措辞与已落地的层对齐** | **M6 四层全落地**：`tools/audit_network.py`（四层可复跑；每层自报扫描面、路径不存在/扫到 0 记 FAIL）+ `netguard.py` + README 隐私承诺（已补记范围与命令）；`tests/test_network_audit.py`（逐层阳性/阴性对照）。M5 及以前只落 ①③，README 当时写"本项目代码不含任何网络调用路径"——**原措辞保留、升级为追加事实** |
+| **K18** | 源码优先交付：`data/` 不进安装包；sdist 需 `MANIFEST.in` 白名单才自足 | `pyproject.toml` + **`MANIFEST.in`（M6 新增白名单）**；`tests/test_sdist_manifest.py`（清单覆盖仓库实物）；M6 实测"解包 → 装 → **在解包目录之外**跑 CLI"7/7 通过 |
 | **K19** | SQLite 特性下限：不用 `RETURNING`（需 3.35+；本机 3.8 通道为 3.34.0） | 存储层（M2） |
 | **K20** | CLI 参数语义三条：①`or DEFAULT` 是错误写法（falsy 合法值会被吞）②装载产物按 `format` **白名单分派**、未知即拒绝 ③每个中间产物落 `--out-dir` 可单步复查 | 各子命令（M2 起逐个遵守） |
 | **K21** | 计数先声明单位：条目数 / 记录数；本次写入 / 本次扫描；恒等式写成**集合划分**不写加法 | 汇总行（M2 起） |

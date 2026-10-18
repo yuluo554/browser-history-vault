@@ -1,0 +1,31 @@
+# 源码包（sdist）白名单：**显式列出**才进包，不靠 setuptools 的默认收集。
+#
+# 为什么需要它（发布期实测）：setuptools 默认只收 `src/` 包与少数顶层文件，
+# `data/` 整棵缺席 → 解包后 `bhvault selftest --data-root data` 找不到台账与
+# fixtures（退出码 1），"源码包"这一发布形态不成立。本项目是**源码优先交付**：
+# 源码包必须能独立复跑生成器两层断言、基准与冒烟，所以数据底座随源码走。
+#
+# 纪律：仓库里新增需要随源码发布的目录时，**在这里加一条**——
+# 漏加的表现是"仓库里跑得通、解包树里缺文件"，只有"解包后在解包目录之外跑 CLI"
+# 能抓到（`tests/test_sdist_manifest.py` 用清单对撞仓库实物，防漏加）。
+
+include README.md
+include LICENSE
+include MANIFEST.in
+include pyproject.toml
+include config.example.json
+include .gitattributes
+include .gitignore
+
+# 源码与测试/工具链（tools 是发布期验收脚本，随源码包走才谈得上"可复跑"）。
+recursive-include src/browser_history_vault *.py
+recursive-include tests *.py
+recursive-include tools *.py
+
+# 数据底座：台账 + 合成 fixtures + 植入真值。
+# 合成 History 库无扩展名，必须显式点名（glob `*` 不会按 .py 之类过滤，但显式更可读）。
+recursive-include data *.md *.json *.jsonl
+recursive-include data/fixtures/synthetic History History-wal
+
+# 计划文档（含发布留档）：源码包读者需要能对照 K 口径与发布事实。
+recursive-include plan *.md

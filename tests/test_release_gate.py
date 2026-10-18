@@ -10,7 +10,9 @@
 
 from __future__ import annotations
 
+import importlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -130,12 +132,17 @@ def test_gate_turns_green_after_state_is_flipped(fixture_repo):
     assert codes["POST_TAG"]["level"] == "PASS"
 
 
-def test_gate_catches_a_leaked_local_path(tmp_path):
-    """泄露扫描也要能被打红（含非 plan 目录 → FAIL）。"""
+def test_gate_catches_a_leaked_personal_marker(tmp_path):
+    """泄露扫描也要能被打红（含非 plan 目录 → FAIL）。
+
+    阳性对照**用运行时实算的词面**（本机用户主目录），不在测试里写死任何个人字面值：
+    门是"从环境实算要找什么"，所以能打红它的也必须是同一来源。
+    """
     neutral = tmp_path / "unpacked"
     neutral.mkdir()
     shutil.copyfile(str(GATE), str(neutral / "check_release.py"))
-    write_text_lf(neutral / "notes.md", "输出目录：C:\\Users\\someone\\vault\n")
+    home = os.path.expanduser("~")
+    write_text_lf(neutral / "notes.md", "输出目录：%s/vault\n" % home)
     proc = subprocess.run(
         [sys.executable, str(neutral / "check_release.py"), str(neutral), "--json"],
         stdout=subprocess.PIPE,
@@ -144,3 +151,37 @@ def test_gate_catches_a_leaked_local_path(tmp_path):
     payload = json.loads(proc.stdout.decode("utf-8"))
     assert _codes(payload)["TRACKED_LEAK"]["level"] == "FAIL"
     assert proc.returncode == 1
+
+
+def test_gate_is_green_on_reserved_domains_and_noreply(tmp_path):
+    """阴性对照：保留域邮箱 / GitHub noreply 不得被误判（否则门会天天红，最后被忽略）。"""
+    neutral = tmp_path / "unpacked"
+    neutral.mkdir()
+    shutil.copyfile(str(GATE), str(neutral / "check_release.py"))
+    write_text_lf(
+        neutral / "notes.md",
+        "联系：someone@users.noreply.github.com / demo@example.test / u@example.invalid\n",
+    )
+    proc = subprocess.run(
+        [sys.executable, str(neutral / "check_release.py"), str(neutral), "--json"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    payload = json.loads(proc.stdout.decode("utf-8"))
+    assert _codes(payload)["TRACKED_LEAK"]["level"] == "PASS"
+
+
+def test_gate_source_carries_no_personal_literal():
+    """扫描器**自己的源码**也要过自己的扫描（纪律：词面运行时实算、源码零字面值）。
+
+    这条断了，扫描器本身就成了"携带个人标记的文件"——它也要进历史，于是永远扫不干净。
+    """
+    sys.path.insert(0, str(GATE.parent))
+    try:
+        module = importlib.import_module("check_release")
+    finally:
+        sys.path.pop(0)
+    tokens, provenance = module.scan_tokens(str(REPO_ROOT))
+    assert tokens, "实算不出任何词面（扫描会退化成空转）：%s" % provenance
+    kinds = module._leak_hits(GATE.read_text(encoding="utf-8"), tokens)
+    assert kinds == set(), "扫描器源码里出现自己的实算词面：%s" % sorted(kinds)

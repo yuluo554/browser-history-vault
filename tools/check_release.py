@@ -30,15 +30,16 @@ RESULTS = []  # (level, code, message)
 FAIL, WARN, PASS, SKIP = "FAIL", "WARN", "PASS", "SKIP"
 
 NOREPLY_RE = re.compile(r"^\d+\+[^@]+@users\.noreply\.github\.com$")
-QQ_RE = re.compile(r"\b\d{5,}@qq\.com\b", re.I)
 RELEASE_DOC_RE = re.compile(r"(RELEASE|WRAPUP|HANDOFF|发布留档)", re.I)
 #: README 里出现这些措辞 = 还不是"已发布态"（tag 时必须已翻转）。
 STALE_STATUS_RE = re.compile(
     r"收尾中|开发中|待首推|待发布|发布执行|下一棒[：:]\s*M6|M6[^\n]{0,6}推进中"
 )
 PUBLISHED_RE = re.compile(r"已发布|发布完成|项目收官|M6[^\n]{0,10}(完成|达成)")
-#: 本机盘符绝对路径：入库即泄露（plan/ 下算 WARN，其余算 FAIL）。
-LOCAL_PATH_RE = re.compile(r"[A-Za-z]:[\\/](?:Users|ProgramData|Program Files)[\\/]")
+#: 通用邮箱形态（**不含任何个人/厂商字面值**）：除了 noreply 与 RFC 2606 保留域，
+#: 入库即视作可能泄露。刻意比"某个邮箱服务商的域名"更宽——窄判据会漏掉别的邮箱。
+EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+ALLOWED_EMAIL_DOMAIN_SUFFIXES = ("users.noreply.github.com", ".invalid", ".test", ".example", ".localhost")
 
 SKIP_DIRS = (".git", "__pycache__", ".pytest_cache", ".venv", "venv", "build", "dist", ".tmp")
 TEXT_SUFFIXES = (".py", ".md", ".json", ".toml", ".yml", ".yaml", ".cfg", ".txt", ".in", ".gitattributes")
@@ -71,6 +72,68 @@ def _unescape(name):
         except (UnicodeDecodeError, UnicodeEncodeError):
             return body
     return name
+
+
+# --------------------------------------------------------------------------
+# 脱敏词面：**运行时实算**，源码里零字面值
+# --------------------------------------------------------------------------
+# 纪律（`plan/07` §3 第 4 条）：扫描器自己的"要找什么"不许写成代码字面量——
+# 写了就会让扫描器源码本身成为携带词面的文件（它自己也要进历史），从而永远扫不干净。
+# 这里全部在运行时从**环境与仓库绝对路径**推出来：
+#   - 用户名      ← getpass.getuser() / 环境变量（换台机器自然跟着变）
+#   - 用户主目录  ← os.path.expanduser("~")
+#   - 盘符 + 系统目录段 ← 仓库所在盘的实际情况（用 pathlib 的 anchors 与已存在目录判定）
+# 首行打印 provenance（"这些词是从哪儿实算出来的"），留档只记类别与来源、不记词面。
+def scan_tokens(repo):
+    """返回 (tokens, provenance)：tokens 是 [(类别, 字面值)]，全部运行时实算。"""
+    tokens = []
+    provenance = []
+
+    user = ""
+    try:
+        import getpass
+
+        user = getpass.getuser() or ""
+    except Exception:  # pragma: no cover - 极端环境下 getuser 可能抛错
+        user = ""
+    if not user:
+        for key in ("USERNAME", "USER", "LOGNAME"):
+            value = os.environ.get(key)
+            if value:
+                user = value
+                break
+    if user and len(user) >= 3:
+        tokens.append(("用户名", user))
+        provenance.append("用户名←getpass/环境变量")
+
+    home = os.path.expanduser("~")
+    if home and os.path.isdir(home):
+        tokens.append(("用户主目录", home))
+        tokens.append(("用户主目录(POSIX 形态)", home.replace("\\", "/")))
+        provenance.append("用户主目录←expanduser('~')")
+
+    repo_abs = os.path.abspath(repo)
+    drive, _ = os.path.splitdrive(repo_abs)
+    if drive:
+        # 盘符 + 用户目录组合形态（最容易被写进文档的那种）。
+        for sep in ("\\", "/"):
+            tokens.append(("盘符路径", drive + sep + "Users"))
+            tokens.append(("盘符路径", drive + sep + "ProgramData"))
+            tokens.append(("盘符路径", drive + sep + "Program Files"))
+        provenance.append("盘符←仓库绝对路径的驱动段")
+
+    # 去重 + 去空 + 丢掉过短的（过短会刷屏误报，且不构成定位信息）。
+    seen = set()
+    unique = []
+    for kind, value in tokens:
+        if len(value) < 6:
+            continue
+        key = value.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append((kind, value))
+    return unique, provenance
 
 
 def resolve_tag(repo, explicit):
@@ -305,9 +368,27 @@ def _iter_scan_files(repo):
     return sorted(files), "filesystem-walk"
 
 
+def _leak_hits(text, tokens):
+    """返回此文本命中的（类别）集合。**只回类别，不回显命中串**——报告本身要能随仓留档。"""
+    kinds = set()
+    lowered = text.lower()
+    for kind, value in tokens:
+        if value.lower() in lowered:
+            kinds.add(kind)
+    for match in EMAIL_RE.finditer(text):
+        address = match.group(0)
+        domain = address.rsplit("@", 1)[-1].lower()
+        if domain.endswith(ALLOWED_EMAIL_DOMAIN_SUFFIXES):
+            continue
+        kinds.add("邮箱")
+    return kinds
+
+
 def check_tracked_leaks(repo):
     files, mode = _iter_scan_files(repo)
+    tokens, provenance = scan_tokens(repo)
     hits = {FAIL: [], WARN: []}
+    scanned_text = 0
     for path in files:
         if not os.path.isfile(path):
             continue
@@ -316,26 +397,23 @@ def check_tracked_leaks(repo):
                 text = handle.read(400000)
         except OSError:
             continue
+        scanned_text += 1
         rel = os.path.relpath(path, repo).replace("\\", "/")
         in_plan = rel.startswith("plan/") or rel.startswith("docs/")
-        if LOCAL_PATH_RE.search(text):
-            hits[WARN if in_plan else FAIL].append("本机绝对路径:" + rel)
-        if QQ_RE.search(text):
-            hits[FAIL].append("QQ邮箱:" + rel)
+        for kind in sorted(_leak_hits(text, tokens)):
+            hits[WARN if in_plan else FAIL].append("%s:%s" % (kind, rel))
+    note = "扫描面 %d 个文本文件（来源 %s）；词面 %d 条运行时实算（%s）" % (
+        scanned_text, mode, len(tokens), "、".join(provenance) or "无可用实算来源")
     if hits[FAIL]:
-        add(FAIL, "TRACKED_LEAK", "入库文件泄露：%s" % ", ".join(sorted(set(hits[FAIL]))[:6]))
+        add(FAIL, "TRACKED_LEAK", "入库文件泄露：%s —— %s" % (", ".join(sorted(set(hits[FAIL]))[:6]), note))
     elif hits[WARN]:
         add(
             WARN,
             "TRACKED_LEAK",
-            "留档内含本机绝对路径（应掩码）：%s" % ", ".join(sorted(set(hits[WARN]))[:6]),
+            "留档内含个人标记（应掩码）：%s —— %s" % (", ".join(sorted(set(hits[WARN]))[:6]), note),
         )
     else:
-        add(
-            PASS,
-            "TRACKED_LEAK",
-            "入库文件无本机绝对路径 / QQ 邮箱（扫描面 %d 个文件，来源 %s）" % (len(files), mode),
-        )
+        add(PASS, "TRACKED_LEAK", "入库文件无个人标记（主机信息 / 用户名 / 邮箱）—— %s" % note)
 
 
 def main(argv=None):

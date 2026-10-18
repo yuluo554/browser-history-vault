@@ -12,6 +12,6 @@ from __future__ import annotations
 
 # 版本唯一来源：pyproject.toml 以 [tool.setuptools.dynamic] 读取本属性，
 # 不在别处再写一份（发布期四向一致：tag / pyproject / 本属性 / README 状态行）。
-__version__ = "0.1.0.dev0"
+__version__ = "0.1.0"
 
 __all__ = ["__version__"]

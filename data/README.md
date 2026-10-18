@@ -93,7 +93,7 @@
 py -3.12 tools/gen_synthetic_history.py            # 生成（覆盖）fixtures
 py -3.12 tools/gen_synthetic_history.py --check     # 两层断言（CI 里跑的就是这条）
 py -3.12 tools/bench.py                             # 基准（六套件全启用；门槛从 manifest 读）
-py -3.12 tools/bench.py --probe --only B0 B1 B2 B3 B4  # 可证伪探活：19 条注入缺陷必须全部被检出
+py -3.12 tools/bench.py --probe --only B0 B1 B2 B3 B4 B5  # 可证伪探活：23 条注入缺陷必须全部被检出
 bhvault selftest --data-root data                   # 用户命令：真读台账并复算真值
 ```
 

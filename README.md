@@ -1,6 +1,6 @@
 # browser-history-vault（浏览器历史本地知识库）
 
-**状态：开发中（归档 + 检索 + 洞察 + 聚类 + 单文件 HTML 报告已可用）** —— 题面与计划见 [plan/00-README总览.md](plan/00-README总览.md)。本版本已交付**只读快照 + 增量归档 + 档案状态**、**归档检索（含 CSV 导出）**、**行为洞察**（频次榜 / 域名集中度 / 时段热力 / 会话 / 遗忘的宝藏）、**主题聚类与研究路径**、**单文件 HTML 报告**（`report --html`）、**自检命令**与**可复跑的合成数据底座**（合成 History 库 + 植入真值 + 基准 B0–B5，全部已启用）。
+**状态：已发布（v0.1.0）** —— 题面与计划见 [plan/00-README总览.md](plan/00-README总览.md)。本版本已交付**只读快照 + 增量归档 + 档案状态**、**归档检索（含 CSV 导出）**、**行为洞察**（频次榜 / 域名集中度 / 时段热力 / 会话 / 遗忘的宝藏）、**主题聚类与研究路径**、**单文件 HTML 报告**（`report --html`）、**自检命令**与**可复跑的合成数据底座**（合成 History 库 + 植入真值 + 基准 B0–B5，全部已启用）。
 
 浏览器只替你留 **90 天**历史，然后静默删除。本工具做「**先归档、再分析**」：首次运行把本地 `History` 的**只读快照**沉淀成自己的长期档案，之后回答「我过去在做什么」「哪些是遗忘的宝藏」「我的作息与兴趣怎么变」。
 
@@ -173,7 +173,12 @@ bhvault status --archive-db ~/.browser-history-vault/archive.db
 - 报告为**单文件 HTML**，零外链、零网络请求，可离线打开：样式内联、无脚本、无外部资源；
   出口有**常驻断言**（零外链从严档 + 私密主机零出现），渲染层零判定（AST 三条守门）。
 - **不上传任何数据、无账号、无云同步**。
-- 口径与证据范围（不夸大）：本版本已实现的是 **本项目代码不含任何网络调用路径**（源码 import 面 AST 守门 + 运行时 socket 拦截双证，见 [tests/test_no_network.py](tests/test_no_network.py)）；发布产物层面（wheel/sdist 扫描、加载面审计）在发布里程碑执行并留档。
+- 口径与证据范围（不夸大）：**"纯本地零上传"分四层审计，四层都有可复跑的实现**
+  （`tools/audit_network.py`）：① 源码 import 面（AST 逐形态，[tests/test_no_network.py](tests/test_no_network.py)）
+  ② 发布产物（wheel/sdist 解包后扫运行时包树）③ 动态拦截（`socket.connect` / `getaddrinfo` 打补丁，
+  全流程 8 条命令跑一遍，零出网尝试 + 零 DNS + netstat 旁证）④ 实际加载面（`-S` 起解释器跑同一串命令，
+  导出 `sys.modules` 逐文件核对：本项目 / 标准库 / 第三方 0）。发布期逐层实跑结论见
+  [plan/RELEASE-M6.md](plan/RELEASE-M6.md)（tag 时点事实栏）。
 
 ## 覆盖区间与诚实提示
 
@@ -193,8 +198,8 @@ bhvault status --archive-db ~/.browser-history-vault/archive.db
 
 ```bash
 py -3.12 tools/gen_synthetic_history.py --check      # 两层断言：冻结产物形态 + 重生成逐字节一致
-py -3.12 tools/bench.py --only B0 B1 B2 B3 B4           # 基准：真值复算 / 归档幂等 / 查询确定性 / 洞察口径 / 聚类与路径
-py -3.12 tools/bench.py --probe --only B0 B1 B2 B3 B4   # 可证伪探活：注入缺陷 → 必须报未达标（19 条）
+py -3.12 tools/bench.py --only B0 B1 B2 B3 B4 B5        # 基准：真值复算 / 归档幂等 / 查询确定性 / 洞察口径 / 聚类与路径 / 隐私与零外链
+py -3.12 tools/bench.py --probe --only B0 B1 B2 B3 B4 B5  # 可证伪探活：注入缺陷 → 必须报未达标（23 条）
 ```
 
 ## 局限与已知问题
