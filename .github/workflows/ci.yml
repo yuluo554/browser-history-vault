@@ -13,8 +13,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # 两条腿 = 两个平台 × **同一个**底线解释器：口径是"底线解释器要真的跑一遍"，
+        # 不是"多枚举几个版本"。3.8/3.9/3.10 均已 EOL（3.10 于 2026-10-01 到期），
+        # 底线抬到 3.12（EOL 2028-10-31）后矩阵由四腿收敛为两腿。
+        # `ubuntu-latest` 自 2026-10-19 起指向 Ubuntu 26：结论必须带 run id + 日期，
+        # 否则是引用过期镜像上的旧结论（见 README「开发」与 plan/RELEASE-0.1.1.md）。
         os: [ubuntu-latest, windows-latest]
-        python-version: ["3.8", "3.12"]
+        python-version: ["3.12"]
     env:
       # 编码加固的第三层：入口 reconfigure 救"我们敲的命令"，子进程显式 encoding 救子进程，
       # 这一层救 CI 里全部步骤（CI 的 python 不是我们敲的，没有 -X utf8）。
@@ -22,9 +27,11 @@ jobs:
       PYTHONDONTWRITEBYTECODE: "1"
 
     steps:
-      - uses: actions/checkout@v4
+      # actions/checkout 与 actions/setup-python 都用 v7：v4/v5 每次 run 会报
+      # `Node.js 20 is deprecated ... forced to run on Node.js 24`（实测 4 条 warning）。
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -34,11 +41,11 @@ jobs:
       - name: 安装本包与开发依赖（测试面 = 安装面 = README 指令面）
         run: python -m pip install -e ".[dev]"
 
-      - name: 全量测试（双解释器矩阵）
+      - name: 全量测试（平台矩阵 × 底线解释器）
         run: python -m pytest
 
       # 合成数据是"可复跑的测量"的地基：两层断言（冻结产物形态 + 重生成逐字节一致）
-      # 必须在**矩阵的每个解释器**上都过——否则"逐字节一致"就只是本机运气。
+      # 必须在**矩阵的每条腿**上都过——否则"逐字节一致"就只是本机运气。
       - name: 合成数据两层断言（形态 + 重生成逐字节一致）
         run: python tools/gen_synthetic_history.py --check
 

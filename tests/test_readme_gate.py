@@ -155,11 +155,26 @@ def test_python_floor_is_documented_and_matches_pyproject():
 
 
 def test_license_file_exists_and_is_declared():
-    """README 写 MIT 而仓库没有 LICENSE 是发布期的实际踩坑（元数据 ≠ 文件）。"""
+    """README 写 MIT 而仓库没有 LICENSE 是发布期的实际踩坑（元数据 ≠ 文件）。
+
+    形态随 PEP 639 收口：`license = { file = "LICENSE" }`（TOML 表）与
+    `License :: OSI Approved :: ...` classifier **都是弃用写法**（打包时告警，上限 2027-02-18），
+    正确形态是 SPDX 表达式 + `license-files`。断言比"出现过某串字"强：
+    既要求新形态在场，也要求**旧形态不在场**（否则"只改了一半"仍然全绿）。
+    """
     readme = _readme_text()
     pyproject_text = PYPROJECT.read_text(encoding="utf-8")
     assert "MIT" in readme
-    assert re.search(r'license\s*=\s*\{\s*file\s*=\s*"LICENSE"\s*\}', pyproject_text)
+    assert re.search(r'^license\s*=\s*"MIT"\s*$', pyproject_text, re.MULTILINE), (
+        "pyproject 未用 SPDX 形式声明许可（license = \"MIT\"）"
+    )
+    assert re.search(r'^license-files\s*=\s*\[\s*"LICENSE"\s*\]\s*$', pyproject_text, re.MULTILINE), (
+        "pyproject 未声明 license-files（PEP 639）"
+    )
+    assert '{ file = "LICENSE" }' not in pyproject_text, "license 表形式已弃用，不得回潮"
+    assert not re.search(r'^\s*"License\s*::', pyproject_text, re.MULTILINE), (
+        "classifiers 里不得再有 License 类条目（已弃用，PEP 639 用 license 表达式）"
+    )
     license_path = REPO_ROOT / "LICENSE"
     assert license_path.is_file(), "README/pyproject 声称 MIT，但仓库里没有 LICENSE 文件"
     assert "MIT" in license_path.read_text(encoding="utf-8")

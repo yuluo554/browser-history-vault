@@ -12,6 +12,8 @@ from __future__ import annotations
 
 # 版本唯一来源：pyproject.toml 以 [tool.setuptools.dynamic] 读取本属性，
 # 不在别处再写一份（发布期四向一致：tag / pyproject / 本属性 / README 状态行）。
-__version__ = "0.1.0"
+# 0.1.1 = 代码级修复版：`python -m browser_history_vault.cli` 曾是静默 no-op
+# （无 `__main__` 守卫），因此"下载到的源码包"必须是新版（见 plan/RELEASE-0.1.1.md）。
+__version__ = "0.1.1"
 
 __all__ = ["__version__"]

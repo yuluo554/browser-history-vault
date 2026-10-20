@@ -76,3 +76,8 @@ config.local.*
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# 迭代交接目录（诊断报告 / 迭代路线 / 执行记录：过程文件，不是仓库源码）
+# 不忽略的话 `tools/check_release.py` 的 CLEAN_TREE 项会因"未跟踪文件"变红，
+# `tests/test_line_endings.py` 的字节门禁也会扫到它（见 tests/helpers.py 的跳过名单）。
+update/

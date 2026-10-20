@@ -224,11 +224,17 @@ def _is_generated(path: Path) -> bool:
     实测教训（本机 3.12 全绿、装完 editable 后突然红）：`pip install -e .` 让
     setuptools 写出 `*.egg-info/SOURCES.txt`，而它**不以换行结尾**——按目录名剪枝
     才挡得住（按文件后缀剪枝挡不住，它是 .txt）。
+
+    同理，迭代交接目录（`update/`：诊断报告 / 迭代路线 / 执行记录）也**不是仓库源码**：
+    它由迭代会话写出、被 `.gitignore` 封死、发布前会被删除，行尾由写它的工具决定。
+    把它扫进来只会得到与仓库无关的红。注意这是**成对**修法的一半，另一半是
+    `.gitignore` 里的 `update/`（由 tests/test_line_endings.py
+    的 test_handoff_dir_is_out_of_scan_and_gitignored 钉住两边都在）。
     """
     for part in path.parts:
         if part in {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", "node_modules"}:
             return True
-        if part.startswith(".venv") or part == "venv" or part in {"build", "dist", ".tmp"}:
+        if part.startswith(".venv") or part == "venv" or part in {"build", "dist", ".tmp", "update"}:
             return True
         if part.endswith(".egg-info") or part.endswith(".dist-info"):
             return True

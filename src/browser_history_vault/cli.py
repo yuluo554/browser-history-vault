@@ -798,3 +798,15 @@ __all__ = [
     "main",
     "registered_subcommands",
 ]
+
+
+if __name__ == "__main__":
+    # `python -m browser_history_vault.cli` 与 `python -m browser_history_vault`
+    # （`__main__.py`）**行为等价**——这是 plan/03 已声明的纪律。
+    #
+    # 缺这段守卫的后果不是报错，而是**静默成功**：解释器只 import 了本模块
+    # （副作用仅定义函数），既不打印也不非 0 退出，`--help` / `--version` 得到的是
+    # "看起来成功、其实什么都没做"（实测 rc 0 / stdout 空 / stderr 空）。
+    # 读者从源码文件名推导调用方式时最容易踩这条；回归测试见
+    # tests/test_module_entrypoints.py。
+    raise SystemExit(main())

@@ -40,6 +40,9 @@
 | 归档幂等 | 二跑 `写入 0 条 / 重复 325` |
 | 产物 | `archive.db` / `snapshot.json` / `search.csv` / `search.json` / `report.json` / `report.html`(81,626) / `cluster.json` 齐备 |
 
+> 体积读数的时点/来源（§1.2 补注，2026-10-20 追加，不改原读数）：**81,626 B = 干净 clone 走完
+> README 快速开始后的副本**（`report --html` 未带 `--at-us`，墙钟日期）。四个读数的逐条来源见 §2.8。
+
 > 第一轮实测踩到一条**文档形态**问题：先显式给了 `--archive-db` 再跑不带该参数的 `search`/`report`，
 > 两端指向不同库 → 退出码 1（"归档库尚不存在"）。README 的快速开始是"一路不带 `--archive-db`"
 > 的一致口径，按原文逐字跑即 10/10 通过。**判据 = 按 README 的形式跑，不是按我习惯的形式跑。**
@@ -91,7 +94,7 @@
 | 重复构建逐字节一致 | ✅ 两次 `git archive HEAD \| gzip -9n` 的 `cmp` **IDENTICAL**，sha256 相同 |
 | 归档树含发布留档 | ✅ `tar tzf` 命中 `MANIFEST.in` / `config.example.json` / `plan/RELEASE-M6.md` / `tools/audit_network.py` |
 | 解包树可跑（**解包目录之外**） | ✅ 全新 venv 安装 → `bhvault selftest` **7/7**；`archive` 退出 0；`report --html` 退出 0 |
-| HTML 样例零外链 | ✅ `http://` 0 / `https://` 0 / `//` 0；83,203 字节；无本机用户目录绝对路径 |
+| HTML 样例零外链 | ✅ `http://` 0 / `https://` 0 / `//` 0；83,203 字节（**时点 = 本节所记的 tag 时点样例件**，即 Release 附件 `report.html` 本身）；无本机用户目录绝对路径 |
 | 样例生成方式 | 在**中立的示意目录**（非本机项目目录）跑 `archive`×3 + `report --html`，使报告里记录的"配置来源"落在示意路径上，而非开发机路径 |
 
 ### 1.7 CI
@@ -172,7 +175,7 @@ sha256: a736f53d08bed077c2a79f3a476341286ffa14005a6c652b26f62eacb722856d  report
 
 | 步 | 动作 | 结果 |
 |---|---|---|
-| 1 | `gh release download v0.1.0 --dir <临时目录>` | 三个附件全部下载成功（466,029 / 83,203 / 179 字节） |
+| 1 | `gh release download v0.1.0 --dir <临时目录>` | 三个附件全部下载成功（466,029 / 83,203 / 179 字节 —— **这三个数是 Release 附件的实际字节**；其中 `report.html` 的 83,203 与 §2.8 登记一致） |
 | 2 | `sha256sum -c SHA256SUMS` | `browser-history-vault-0.1.0.tar.gz: OK` / `report.html: OK` |
 | 3 | 下载件 vs 本地构建件 `cmp` | 源码包 **逐字节一致**；`report.html` **逐字节一致** |
 | 4 | 附件解包树 vs `git archive v0.1.0` 解包树 `diff -r` | **无差异**（`DIFF_R_CLEAN`）——附件与 tag 树逐字节同源 |
@@ -191,7 +194,7 @@ sha256: a736f53d08bed077c2a79f3a476341286ffa14005a6c652b26f62eacb722856d  report
 | `bhvault status` | 0 |
 | `bhvault search 示例文章` | 0（出 `search.csv` + `search.json`） |
 | `bhvault report` | 0 |
-| `bhvault report --html` | 0（出 `report.html` 81,656 字节） |
+| `bhvault report --html` | 0（出 `report.html` 81,656 字节 —— **时点/来源 = 在下载件解包树里执行、未带 `--at-us`（墙钟日期）**，故与附件字节不同） |
 | `bhvault cluster` | 0（出 `cluster.json` 155,429 字节） |
 
 > 如实记一条**验证动作自身**的插曲：第一轮我在复制 `config.json` **之前**就跑了
@@ -241,6 +244,61 @@ py -3.12 tools/check_release.py .
 
 > **为什么 §1.8 保留空框**：那是 tag 树里的原文，tag 树不可能包含"tag 之后才成立"的打勾。
 > 差异写在这里（追加栏），而不是回头改写上一节——这就是"两栏纪律"的实际形态。
+
+### 2.8 样例件可复算（2026-10-20 追加事实，v0.1.0 tag 之后才成立）
+
+> **这一节回答的是"下载件里的 `report.html` 能不能自己复算一遍"**——它是本仓最容易被误判成
+> "产品坏了"的形态（同一份档案、同一份 config 重算出的字节与附件不同）。结论：**能，且是逐字节的**；
+> 差异全部来自"没固定住变量"，不是渲染不稳定。
+
+**tag 时点登记的注入时刻与档案库口径**（三个变量，缺一个就对不上）：
+
+| 变量 | 值 | 说明 |
+|---|---|---|
+| 归档时刻（`bhvault archive --at-us`） | `13400000000000000` / `+1` / `+2`（逐来源） | 三个来源按 `chrome` → `edge` → `chrome-running` 顺序归档；报告页"归档来源与时间"表里三行同一秒（`2025-08-18 22:13:20`）就是这三个值 |
+| 统计基准（`bhvault report --at-us`） | `13436683200000000` | 报告页的"生成日期"与"距今 N 天"由它决定（页内注明"统计基准由调用方注入，不读时钟"） |
+| 档案库 | **由仓库自带冻结 fixtures 现场重建**，不是 tag 时点的那份 `out/archive.db` | `out/archive.db` 会被增量归档改写；重建命令见下（也见 README「下载件的样例 report.html 怎么复算」） |
+
+```bash
+# 在仓库根执行（PATH 里要有 bhvault，或用 .venv/Scripts/python -m browser_history_vault）
+REPO="$PWD"; CFG="$REPO/config.example.json"
+mkdir -p "$TEMP/bhv-repro" && cd "$TEMP/bhv-repro"
+bhvault archive --browser-dir "$REPO/data/fixtures/synthetic/chrome"         --browser chrome --config "$CFG" --archive-db out/archive.db --out-dir out --at-us 13400000000000000
+bhvault archive --browser-dir "$REPO/data/fixtures/synthetic/edge"           --browser edge   --config "$CFG" --archive-db out/archive.db --out-dir out --at-us 13400000000000001
+bhvault archive --browser-dir "$REPO/data/fixtures/synthetic/chrome-running" --browser chrome --config "$CFG" --archive-db out/archive.db --out-dir out --at-us 13400000000000002
+bhvault report --html --config "$CFG" --archive-db out/archive.db --out-dir out --at-us 13436683200000000
+sha256sum out/report.html
+```
+
+**实测（2026-10-20）**：
+
+| 观测 | 结果 |
+|---|---|
+| 把 `__version__` 置回 `0.1.0` 后按上面配方生成 | `sha256 a736f53d08bed077c2a79f3a476341286ffa14005a6c652b26f62eacb722856d` / **83,203 B**，与 §2.1 登记的附件逐字节 `cmp` **无差异** |
+| 同一配方在 `0.1.1` 上两次生成 | `sha256 e7973618a5907ecb434b7dc6a54cec82208d912eb17f4b14f94e7d40e46c30db` 两次相同（登记在 `plan/RELEASE-0.1.1.md` §1.3） |
+| 与附件的**唯一必然差异** | "配置来源"那一行：附件里是**构建机的示意目录**（`C:\bhvault-sample\config.json`），本机复算是仓库路径。归一掉该行后逐字节一致：`diff <(grep -v 'json</div>$' out/report.html) <(grep -v 'json</div>$' report.html)` 无输出 |
+
+**`report.html` 四个体积读数的时点/来源**（**都真实，不抹成一个数**）：
+
+| 读数 | 出处 | 生成时点 / 来源 |
+|---|---|---|
+| **83,203 B** | §1.6 / §2.1 / §2.2（Release 附件） | **tag 时点样例件**（`--at-us 13436683200000000` + 冻结 fixtures，在示意目录构建） |
+| **81,656 B** | §2.3 | 下载件解包树里走 README 逐条命令：**未带 `--at-us`**（墙钟日期） |
+| **81,626 B** | §1.2 / `plan/00` | 干净 clone 走完 README 快速开始后的副本（同样是墙钟） |
+| **81,361 B** | 仓库本机 `out/report.html` | 开发期产物（`.gitignore` 锚定，随本机档案库变化；**不入仓、不入附件**） |
+
+### 2.9 v0.1.0 之后的两次口径统一（2026-10-20 追加事实）
+
+| 项 | tag 时点（§1 原文） | 现在（追加事实） | 性质 |
+|---|---|---|---|
+| Python floor | `>=3.8`（classifier 枚举 3.8–3.12；CI 四腿） | **`>=3.12`**（classifier 只留 3.12；CI 两腿） | **口径选择**：3.8/3.9/3.10 均已 EOL（3.10 于 2026-10-01 到期）。3.8 腿当时是**绿的**（本机 3.8.8 实测 418 passed），所以这不是"修 bug"，是"不再支持" |
+| 打包元数据 | `license = { file = "LICENSE" }` + `License` 类 classifier（打包告警，上限 2027-02-18） | SPDX `license = "MIT"` + `license-files`；`setuptools>=61` → `>=77` | 弃用写法收口（PEP 639） |
+| CI actions | `actions/checkout@v4` / `setup-python@v5`（每次 run 4 条 Node 20 弃用 warning） | **v7** | 注解清零 |
+| 全量测试计数 | 418 项（§1.9 / `plan/00` / `plan/05`） | **423 项**（+5：`tests/test_module_entrypoints.py` 4 项 +「交接目录不进扫描面」1 项） | 新增守门；本档 §1.9 的 418 是 tag 时点读数，**保留原样** |
+
+> `plan/03` 的 A7 与 `plan/00` 的 D16 记的是**当时的决策与理由**（"把底线对齐到能真跑的通道"），
+> 本行只追加"底线已随生态 EOL 抬到 3.12"，不改写那两张决策表——同一套判据（能真跑 + 不引依赖）
+> 在新时点给出的就是新值。
 
 ---
 

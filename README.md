@@ -1,6 +1,6 @@
 # browser-history-vault（浏览器历史本地知识库）
 
-**状态：已发布（v0.1.0）** —— 题面与计划见 [plan/00-README总览.md](plan/00-README总览.md)。本版本已交付**只读快照 + 增量归档 + 档案状态**、**归档检索（含 CSV 导出）**、**行为洞察**（频次榜 / 域名集中度 / 时段热力 / 会话 / 遗忘的宝藏）、**主题聚类与研究路径**、**单文件 HTML 报告**（`report --html`）、**自检命令**与**可复跑的合成数据底座**（合成 History 库 + 植入真值 + 基准 B0–B5，全部已启用）。
+**状态：已发布（v0.1.1）** —— 题面与计划见 [plan/00-README总览.md](plan/00-README总览.md)，逐次发布事实见 [plan/RELEASE-M6.md](plan/RELEASE-M6.md)（v0.1.0）与 [plan/RELEASE-0.1.1.md](plan/RELEASE-0.1.1.md)（v0.1.1）。本版本已交付**只读快照 + 增量归档 + 档案状态**、**归档检索（含 CSV 导出）**、**行为洞察**（频次榜 / 域名集中度 / 时段热力 / 会话 / 遗忘的宝藏）、**主题聚类与研究路径**、**单文件 HTML 报告**（`report --html`）、**自检命令**与**可复跑的合成数据底座**（合成 History 库 + 植入真值 + 基准 B0–B5，全部已启用）。
 
 浏览器只替你留 **90 天**历史，然后静默删除。本工具做「**先归档、再分析**」：首次运行把本地 `History` 的**只读快照**沉淀成自己的长期档案，之后回答「我过去在做什么」「哪些是遗忘的宝藏」「我的作息与兴趣怎么变」。
 
@@ -102,8 +102,50 @@ bhvault report --html --path-limit 3 --out-dir out/         # 报告里最多展
 - **报告头必含三块**：覆盖区间 + 缺口提示（由区间**推导**，不写死）+ 生效口径块
   （N / 会话间隔 / 时区 / 聚类阈值 / 起算日）+ 归档来源与时间（来自归档库的 `archives` 表）。
 - **确定性**：同一档案 + 同一配置 + 同一 `--at-us` 两次生成，`report.html` **逐字节一致**。
+  这条契约的**可复算配方**（下载件怎么自己算一遍）见下面「下载件的样例 `report.html` 怎么复算」。
 - **首启隐私说明**：首次 `bhvault report` 打印「只读副本 / 本地生成 / 零上传」；标记写**用户主目录**
   （标记文件写在用户主目录，不写仓库），写不进去不算失败（下次再念一遍）。
+
+### 下载件的样例 `report.html` 怎么复算
+
+Release 附件里的 `report.html` 不是"随手截的一张图"，它是**由仓库自带合成 fixtures 生成的样例件**，
+所以任何人都能用同一串命令把它算回来。比"附件能下载"更重要的一步是**本地复算**——
+下面两条都要跑（第一条校验字节没被动过，第二条证明页面是**算得出来的**）：
+
+```bash
+# ① 校验下载件本身（附件与登记值逐条对撞；两行都是 OK）
+T="$TEMP/bhv-verify"; rm -rf "$T"; mkdir -p "$T"
+gh release download v0.1.1 -R yuluo554/browser-history-vault -D "$T"
+(cd "$T" && sha256sum -c SHA256SUMS)
+
+# ② 用仓库自带的冻结 fixtures 复算同一张样例页（**在仓库根执行**）
+REPO="$PWD"; CFG="$REPO/config.example.json"
+mkdir -p "$TEMP/bhv-repro" && cd "$TEMP/bhv-repro"
+bhvault archive --browser-dir "$REPO/data/fixtures/synthetic/chrome"         --browser chrome --config "$CFG" --archive-db out/archive.db --out-dir out --at-us 13400000000000000
+bhvault archive --browser-dir "$REPO/data/fixtures/synthetic/edge"           --browser edge   --config "$CFG" --archive-db out/archive.db --out-dir out --at-us 13400000000000001
+bhvault archive --browser-dir "$REPO/data/fixtures/synthetic/chrome-running" --browser chrome --config "$CFG" --archive-db out/archive.db --out-dir out --at-us 13400000000000002
+bhvault report --html --config "$CFG" --archive-db out/archive.db --out-dir out --at-us 13436683200000000
+sha256sum out/report.html          # 与附件登记值一致当且仅当配置放在同一示意路径（见下 ③）；否则只差"配置来源"一行
+diff <(grep -v 'json</div>$' out/report.html) <(grep -v 'json</div>$' "$T/report.html")   # 无输出 = 除"配置来源"一行外逐字节一致
+```
+
+三个前提（少一个就对不上，这**不是**产品坏了）：
+
+1. **档案库必须是同一份**：`out/archive.db` 会被增量归档改写，所以它**不等于**生成附件时那一份。
+   上面的第 ② 步用仓库自带的冻结 fixtures（`data/fixtures/synthetic/`）按固定顺序重建一份，
+   于是页面里的覆盖区间、缺口段数、各榜单项都跟着稳定。
+2. **必须显式 `--at-us`**：不给就取墙钟，产物里的"生成日期"与"距今 N 天"会随运行日变
+   （报告页会明确打印"统计基准由调用方注入，不读时钟"）。
+3. **"配置来源"那一行是构建机的路径**：页面会把生效配置的绝对路径印出来。样例件里是构建时的
+   示意目录（构建机上的 `C:\bhvault-sample\` 下的 config.json）；你放在别处时，页面**除这一行外逐字节一致**
+   （上面最后那条 `diff` 就是把这一行归一掉再比）。**想让这一行也一致**：在 Windows 上把
+   `config.example.json` 复制成 `C:\bhvault-sample\config.json`（构建时的示意路径）并把 `CFG` 指向它——
+   此时 `sha256sum` 就等于附件登记值（v0.1.1 样例件：`e7973618a5907ecb434b7dc6a54cec82208d912eb17f4b14f94e7d40e46c30db`，83,203 字节）。
+   这也解释了为什么"下载件里的路径"看着像别人的机器——它是构建机的示意路径，不是你的数据、
+   也不是泄露（脱敏门的判据是**仓库绝对路径的驱动段**，见下文隐私承诺）。
+
+第 ② 步的注入时刻（`13400000000000000` / `+1` / `+2` 与统计基准 `13436683200000000`）是 tag 时点
+登记值，逐条写在 [plan/RELEASE-0.1.1.md](plan/RELEASE-0.1.1.md) §1.4（含"v0.1.0 的样例件已被逐字节复现"的实测）。
 
 ### 主题聚类与研究路径怎么用
 
@@ -209,7 +251,7 @@ py -3.12 tools/bench.py --probe --only B0 B1 B2 B3 B4 B5  # 可证伪探活：�
 - 私密域名清单**暂不支持 IPv6 字面量**，请写主机名。
 - 时区口径用**固定 UTC 偏移**（默认 `480` = UTC+8）而非命名时区：零依赖项目在 Windows 上没有 tzdata，且固定偏移才满足「同一输入 + 同一配置 = 同一输出」。
 - 控制台命令叫 **`bhvault`**（而非 `vault`）：避免与 HashiCorp Vault 的 CLI 同名互相遮蔽。
-- Windows 上用 `py -3.12 -m venv` / `py -3.8 -m venv` 建环境即可；`python` 可能是商店占位符。
+- Windows 上用 `py -3.12 -m venv` 建环境即可；`python` 可能是商店占位符。
 
 ## 开发
 
@@ -221,7 +263,13 @@ py -3.12 tools/smoke_cli.py --require-console-script  # 离线 CLI 冒烟（两�
 py -3.12 tools/check_release.py . --no-gh             # 发布终态门禁（发布前本来就该红）
 ```
 
-IDE 与解释器：底线 **Python 3.8**，已在 3.8 与 3.12 两条通道跑全量测试。
+IDE 与解释器：底线 **Python 3.12**（`requires-python = ">=3.12"`，classifier 只留 3.12）。
+CI 矩阵 = `{ubuntu-latest, windows-latest} × 3.12` 两条腿（同一条底线在 Windows 与 Linux 上各跑一遍，
+不是"多枚举几个版本"）：3.8 / 3.9 / 3.10 均已 EOL（3.10 于 2026-10-01 到期），3.11 于 2027-10-31 到期。
+每次 push / tag 各产生一条 run（同 sha 两条是合法的，两条都要绿）；
+**"CI 全绿"必须带 run id 与日期**——`ubuntu-latest` 自 2026-10-19 起指向 Ubuntu 26，
+不带时点的"全绿"是引用过期镜像上的旧结论。逐次 run id / 日期 / 注解条数登记在
+[plan/RELEASE-0.1.1.md](plan/RELEASE-0.1.1.md) §1（tag 时点）与 §2（tag 后事实）。
 
 改了 `tools/gen_synthetic_history.py` 或 `config.example.json` 之后要**重生成** fixtures
 （`py -3.12 tools/gen_synthetic_history.py`）：台账记录了生成器与口径文件的 sha256，

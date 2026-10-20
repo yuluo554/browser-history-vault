@@ -332,7 +332,7 @@ M6 首推后据实补记真实 run id，**历史措辞保留原文、补记是�
 | 全量测试（3.8.8，底线通道） | `py -3.8 -m pytest` | **418 passed**（86.3s） |
 | 全量测试（venv 安装面） | `./.venv/Scripts/python -m pytest` | **418 passed**（66.2s） |
 | 干净 clone 全量测试 | `git clone --no-local` → 全新 venv → `pip install -e ".[dev]"` → `pytest` | **418 passed**（56.5s） |
-| 干净 clone 按 README 逐条 | 快速开始 10 条命令（`config`/`selftest`/`snapshot`/`archive`×2/`status`/`search`/`report`/`report --html`/`cluster`） | **10/10 退出码 0**；二跑 `visits_added = 0`；产物 6 件齐（`report.html` 81,626 字节） |
+| 干净 clone 按 README 逐条 | 快速开始 10 条命令（`config`/`selftest`/`snapshot`/`archive`×2/`status`/`search`/`report`/`report --html`/`cluster`） | **10/10 退出码 0**；二跑 `visits_added = 0`；产物 6 件齐（`report.html` 81,626 字节 —— **时点/来源：本机 3.12 通道、`report --html` 未带 `--at-us`（墙钟日期）**；`report.html` 的四个真实体积读数逐条来源见 `plan/RELEASE-M6.md` §2.8） |
 | 生成器两层断言（3.12 / 3.8） | `py -3.12 tools/gen_synthetic_history.py --check` | **22 PASS / 0 FAIL**（两通道同） |
 | 基准（全量六套件） | `py -3.12 tools/bench.py` | 退出码 **0**（6 套件达标 / 0 未达标 / 0 未启用） |
 | 基准（底线解释器） | `py -3.8 tools/bench.py` | 退出码 **0** |
