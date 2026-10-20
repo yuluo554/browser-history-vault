@@ -28,6 +28,8 @@ EXTRAS_RE = re.compile(r"\[([a-z0-9,\-\s]+)\]")
 PATH_SUFFIXES = (".md", ".json", ".py", ".toml", ".yml", ".yaml", ".txt")
 #: 无扩展名但确实是仓库内实物的文件名。
 PATH_BASENAMES = {"LICENSE"}
+#: 绝对路径形态（`C:\…` / `C:/…` / `/…`）——**不是**仓库相对路径，见 `_inline_spans` 的说明。
+ABSOLUTE_SPAN_RE = re.compile(r"^(?:[A-Za-z]:[\\/]|/)")
 
 
 def _readme_text() -> str:
@@ -54,12 +56,22 @@ def _inline_spans(text: str):
     """采集 README 里指向仓库内文件的两类写法：行内代码 与 markdown 链接目标。
 
     只采"看起来是仓库内路径"的（有已知后缀或无后缀的实物文件名），
-    排除 URL / 锚点 / 带占位符的写法。
+    排除 URL / 锚点 / 带占位符的写法 / **绝对路径**。
+
+    为什么必须排除绝对路径（实测踩到的坑）：`Path(REPO_ROOT) / "C:\\dir\\f.json"`
+    在 **Windows 上会把基路径整个换掉**（pathlib 认为带盘符的路径已是绝对的），于是
+    "这个文件在不在仓库里"这条断言**只取决于那台机器上有没有那个目录**——
+    本机有（`C:\\bhvault-sample\\` 正是样例件的构建目录）就绿，CI 上没有就红，
+    同一份仓库、两个相反结论。绝对路径本来也不是"仓库相对路径"，
+    因此这里不把它当候选；"README 不许把绝对路径写成行内代码"由下面
+    `test_readme_does_not_inline_absolute_paths` 用**静态判据**（正则，不看文件系统）守住。
     """
     candidates = [match.group(1).strip() for match in INLINE_CODE_RE.finditer(text)]
     candidates += [match.group(1).strip() for match in MARKDOWN_LINK_RE.finditer(text)]
     for span in candidates:
         if not span or "://" in span or span.startswith("#"):
+            continue
+        if ABSOLUTE_SPAN_RE.match(span):
             continue
         if " " in span or span.startswith("-") or span.startswith("<") or span.startswith("*"):
             continue
@@ -112,6 +124,21 @@ def test_every_referenced_repo_path_exists():
             missing.append(span)
     assert checked >= 5, "采集到的路径过少（%d），守门可能失效" % checked
     assert missing == [], "README 引用了不存在的路径：%s" % missing
+
+
+def test_readme_does_not_inline_absolute_paths():
+    """README 不得把**绝对路径**写成行内代码（判据是静态正则，不看文件系统）。
+
+    实测踩到的事故（本机绿 / CI 红，同一份仓库两个结论）：README 里写了
+    `` `C:\\bhvault-sample\\config.json` ``，而 `_inline_spans` 把它当"仓库内路径"去对账——
+    `Path(REPO_ROOT) / span` 在 Windows 上是**绝对路径**（基路径被替换），于是
+    "文件在不在仓库里"变成了"这台机器上有没有那个目录"：本机有（那是样例件的构建目录）就绿，
+    CI 上没有就红。绝对路径既不是仓库相对路径、也不该按仓库对账，
+    所以这里用一条与机器无关的断言把它挡住；文档要提绝对路径时就用**行内代码之外**的写法。
+    """
+    spans = [match.group(1).strip() for match in INLINE_CODE_RE.finditer(_readme_text())]
+    absolute = [span for span in spans if ABSOLUTE_SPAN_RE.match(span)]
+    assert absolute == [], "README 的行内代码里出现了绝对路径（本机能跑≠别人能跑）：%s" % absolute
 
 
 def test_readme_extras_match_pyproject_both_ways():

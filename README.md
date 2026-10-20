@@ -137,9 +137,9 @@ diff <(grep -v 'json</div>$' out/report.html) <(grep -v 'json</div>$' "$T/report
 2. **必须显式 `--at-us`**：不给就取墙钟，产物里的"生成日期"与"距今 N 天"会随运行日变
    （报告页会明确打印"统计基准由调用方注入，不读时钟"）。
 3. **"配置来源"那一行是构建机的路径**：页面会把生效配置的绝对路径印出来。样例件里是构建时的
-   示意目录（构建机上的 `C:\bhvault-sample\` 下的 config.json）；你放在别处时，页面**除这一行外逐字节一致**
+   示意目录（构建机上的 C:\bhvault-sample\ 下的 config.json）；你放在别处时，页面**除这一行外逐字节一致**
    （上面最后那条 `diff` 就是把这一行归一掉再比）。**想让这一行也一致**：在 Windows 上把
-   `config.example.json` 复制成 `C:\bhvault-sample\config.json`（构建时的示意路径）并把 `CFG` 指向它——
+   `config.example.json` 复制成 C:\bhvault-sample\config.json（构建时的示意路径）并把 `CFG` 指向它——
    此时 `sha256sum` 就等于附件登记值（v0.1.1 样例件：`e7973618a5907ecb434b7dc6a54cec82208d912eb17f4b14f94e7d40e46c30db`，83,203 字节）。
    这也解释了为什么"下载件里的路径"看着像别人的机器——它是构建机的示意路径，不是你的数据、
    也不是泄露（脱敏门的判据是**仓库绝对路径的驱动段**，见下文隐私承诺）。
