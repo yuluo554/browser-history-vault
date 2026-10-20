@@ -103,42 +103,51 @@ tag 时点实测的三件事：
 
 ### 1.5 CI
 
-⬜ **待推送后回填**：本档是"tag 前先落盘"的形态，而 run id / 矩阵结论在推送那一刻才产生。
-收敛后的矩阵 = `{ubuntu-latest, windows-latest} × 3.12` 两条腿；**结论必须带 run id + 日期**
-（`ubuntu-latest` 自 2026-10-19 起指向 Ubuntu 26，不带时点的"全绿"是引用过期镜像上的旧结论）。
+✅ **第二轮即绿**（第一轮双平台同时红在一项——本机侥幸通过、CI 暴露，见本节末）。
+
+| 项 | 值 |
+|---|---|
+| 矩阵 | `{ubuntu-latest, windows-latest} × 3.12` 两条腿（`fail-fast: false`） |
+| 最近一次全绿 run | **`39370433346`**（`push`，head `cd5723e2ecfda38715866c3e18e6e01a9b0dad9a`，2026-10-20T04:36:03Z） |
+| 逐腿结论 | `py3.12 on ubuntu-latest` **success**（12/12 步）；`py3.12 on windows-latest` **success**（12/12 步） |
+| 注解 | **Node 20 弃用：0 条**（改前 4 条）；另剩 1 条**由 GitHub 的 runner-images 自己**贴出的提示 `The ubuntu-latest label will migrate to Ubuntu 26 beginning October 19, 2026`——与本仓工作流无关，只有不再用 `ubuntu-latest`（钉死镜像版本）才会消失 |
+| 失败的第一次 run | `39369862999`（head `cb2c63e`）：双平台同红在 `tests/test_readme_gate.py::test_every_referenced_repo_path_exists`，`README 引用了不存在的路径：['C:\\bhvault-sample\\config.json']` |
+
+> **这条失败值得单独记**（"本机能跑 ≠ 别人能跑"的教科书形态）：README 把样例件的构建路径写成行内代码后，
+> 路径门把它当"仓库内路径"对账，而 `Path(REPO_ROOT) / "C:\\…"` 在 **Windows 上会把基路径整个替换掉**
+> → 该断言退化成"这台机器上有没有那个目录"：本机恰好有（那正是样例件的构建目录）就绿，CI 上没有就红。
+> 修法：README 提绝对路径不再用行内代码；门新增 `test_readme_does_not_inline_absolute_paths`
+> （**静态正则，不看文件系统**），并让 `_inline_spans` 不再把绝对路径当仓库相对路径——判据由此与机器无关。
 
 ### 1.6 发布终态门禁
 
-⬜ **tag 后回填**（tag 未打时 `TAG_EXISTS` 本来就该红：这道门的可跑性与可证伪性由
-`tests/test_release_gate.py` 覆盖，正式执行时机是发布收尾）。
+✅ tag 前实测（`tools/check_release.py .`，在线）：`0 FAIL / 1 WARN`，其中
+WARN = `POST_TAG`（此刻 HEAD 领先 `v0.1.0`，属正常开发中形态）；`TAG_*` / `EMAILS` / `TAGGER_EMAIL` /
+`REMOTE_TAG` / `RELEASE_ASSETS` / `CLEAN_TREE` / `TRACKED_LEAK` 全 PASS。
+tag 之后重跑（HEAD == tag）应为 `0 FAIL / 0 WARN`，实测值见 Release 说明。
 
 ---
 
 ## 2. 发布后追加事实
 
-> 本节只追加 tag 之后才成立的事实；**不回填、不改写** §1 的原文。
-> `check_release.py` 的 `POST_TAG` 项要求"tag 后追加事实另列"：tag 之后的提交只允许是追加类
-> （提交信息含"追加/补记/对账/收口/复核"语义），且**没有任何功能代码或用户面语义**在 tag 之后被改动。
+> **本版刻意保持 "tag == HEAD"**：核心验收要求 `git rev-list --count v0.1.1..HEAD` **为 0**。
+> 因此"tag 之后才成立"的事实（tag 指向的提交 sha、tag 对象 sha、tag push run id、
+> 三个附件的 sha256 与字节数、发布物复核结论）登记在 **Release 说明** 与 **tag 消息**里，
+> 而不是靠"tag 后再补一次提交"回填本档——那会让 `v0.1.1..HEAD` 立刻不为 0，
+> 也让"被 CI 验过的那个提交"不再是发布出去的提交。
+>
+> 这是 `plan/RELEASE-M6.md` 那套"两栏纪律"的一个**刻意变体**：那一版用 tag 后追加提交回填
+> （`POST_TAG` 给 WARN），本版选择"tag 即末次回填点"（`POST_TAG` 给 PASS）。
+> 两者都合法；判据始终是**读者能不能拿到正确结论**——所以下面两条都给出"去哪儿看"。
 
-### 2.0 tag 与远端（tag 后事实）
+### 2.0 tag 与远端
 
-| 项 | 值 |
-|---|---|
-| tag 指向提交 | ⬜ 待打 tag 后登记（`git rev-parse v0.1.1^{commit}`） |
-| tag 对象 sha | ⬜（`git cat-file -t v0.1.1` 应为 `tag`：annotated） |
-| 远端 tag 对象类型 | ⬜（`gh api repos/yuluo554/browser-history-vault/git/ref/tags/v0.1.1` → `object.type`） |
-| v0.1.0 处置 | **未动**：tag 对象 `e4310938…` → 提交 `1d25b04`，三个附件原样保留 |
+⬜ **登记处 = Release 说明 `v0.1.1`**（`git rev-parse v0.1.1^{commit}` / `git cat-file -t v0.1.1` /
+`gh api repos/yuluo554/browser-history-vault/git/ref/tags/v0.1.1`）。
+**v0.1.0 未动**：tag 对象 `e4310938…` → 提交 `1d25b04`，三个附件原样保留。
 
-### 2.1 CI run（tag 后事实）
+### 2.1 附件与发布物复核
 
-| 项 | 值 |
-|---|---|
-| branch push run | ⬜ 待回填（run id / 日期 / 结论 / 注解条数） |
-| tag push run | ⬜ 待回填 |
-| 矩阵 | `{ubuntu-latest, windows-latest} × 3.12`（两腿；`fail-fast: false`） |
-| 注解 | 期望 **0 条**（改前实测 4 条 Node 20 弃用 warning + 2 条 Ubuntu 26 迁移 notice） |
-
-### 2.2 发布物本体复核（tag 后事实）
-
-⬜ 待执行：`gh release download v0.1.1` → `sha256sum -c SHA256SUMS` → 附件解包树 vs
-`git archive v0.1.1` 解包树 `diff -r` → 仓库内 `tools/check_release.py .` 0 FAIL。
+⬜ **登记处 = Release 说明 `v0.1.1`**：三个附件的 sha256 与字节数、`sha256sum -c SHA256SUMS` 结果、
+附件解包树 vs `git archive v0.1.1` 解包树 `diff -r` 结果。
+本版**样例件** `report.html` 的 sha256 属"不指向附件自身"的量，已登记在 §1.3 / §1.4（可进 tag 树）。

@@ -268,8 +268,10 @@ CI 矩阵 = `{ubuntu-latest, windows-latest} × 3.12` 两条腿（同一条底�
 不是"多枚举几个版本"）：3.8 / 3.9 / 3.10 均已 EOL（3.10 于 2026-10-01 到期），3.11 于 2027-10-31 到期。
 每次 push / tag 各产生一条 run（同 sha 两条是合法的，两条都要绿）；
 **"CI 全绿"必须带 run id 与日期**——`ubuntu-latest` 自 2026-10-19 起指向 Ubuntu 26，
-不带时点的"全绿"是引用过期镜像上的旧结论。逐次 run id / 日期 / 注解条数登记在
-[plan/RELEASE-0.1.1.md](plan/RELEASE-0.1.1.md) §1（tag 时点）与 §2（tag 后事实）。
+不带时点的"全绿"是引用过期镜像上的旧结论。
+本版（v0.1.1）最近一次全绿：**run `39370433346`（2026-10-20T04:36:03Z，head `cd5723e`）**，
+两条腿各 12/12 步 success，Node 20 弃用注解 0 条（改前 4 条）；逐次 run id / 日期 / 注解条数
+登记在 [plan/RELEASE-0.1.1.md](plan/RELEASE-0.1.1.md) §1.5（tag 时点）与 §2（tag 后事实的登记处）。
 
 改了 `tools/gen_synthetic_history.py` 或 `config.example.json` 之后要**重生成** fixtures
 （`py -3.12 tools/gen_synthetic_history.py`）：台账记录了生成器与口径文件的 sha256，
