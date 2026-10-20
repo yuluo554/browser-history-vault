@@ -294,7 +294,16 @@ sha256sum out/report.html
 | Python floor | `>=3.8`（classifier 枚举 3.8–3.12；CI 四腿） | **`>=3.12`**（classifier 只留 3.12；CI 两腿） | **口径选择**：3.8/3.9/3.10 均已 EOL（3.10 于 2026-10-01 到期）。3.8 腿当时是**绿的**（本机 3.8.8 实测 418 passed），所以这不是"修 bug"，是"不再支持" |
 | 打包元数据 | `license = { file = "LICENSE" }` + `License` 类 classifier（打包告警，上限 2027-02-18） | SPDX `license = "MIT"` + `license-files`；`setuptools>=61` → `>=77` | 弃用写法收口（PEP 639） |
 | CI actions | `actions/checkout@v4` / `setup-python@v5`（每次 run 4 条 Node 20 弃用 warning） | **v7** | 注解清零 |
-| 全量测试计数 | 418 项（§1.9 / `plan/00` / `plan/05`） | **423 项**（+5：`tests/test_module_entrypoints.py` 4 项 +「交接目录不进扫描面」1 项） | 新增守门；本档 §1.9 的 418 是 tag 时点读数，**保留原样** |
+| 全量测试计数 | 418 项（§1.9 / `plan/00` / `plan/05`） | **424 项 = 418 + 6**（+4 `tests/test_module_entrypoints.py`、+1「交接目录不进扫描面」、+1「README 不得内联绝对路径」）；**现取值以 `pytest --collect-only` 为准**——本仓 `plan/01` 第 158 行写着"数字承诺为口径式、不写死测试数"，这里给绝对值只是为了让两栏可比 | 新增守门；本档 §1.9 的 418 是 tag 时点读数，**保留原样** |
+
+> **更正（tag 后补记，2026-10-20）**：本格初稿写的是「**423 项**（+5）」，**漏计了 CI 修复轮新增的
+> `test_readme_does_not_inline_absolute_paths`**（那一轮我在写完本节之后才加它）。
+> `git tag v0.1.1` 的树里仍是这个错值（**源码包附件因此也含该错值**），此后以本节为准。
+> 证据：`.venv/Scripts/python.exe -m pytest --collect-only` → **424 tests collected**；
+> `.venv/Scripts/python.exe -m pytest` → **424 passed**。
+> 这正是本仓 18 条失效模式里的第 1 条（"自述测试数与实际不符"），而本仓**没有计数守门**——
+> 所以处置不是"补一条脆弱的数字门"，而是把这一格改成**"给算式 + 指明现取命令"**：`418 + 6` 可核对，
+> 绝对值只作时点快照，不承担门禁职责。
 
 > `plan/03` 的 A7 与 `plan/00` 的 D16 记的是**当时的决策与理由**（"把底线对齐到能真跑的通道"），
 > 本行只追加"底线已随生态 EOL 抬到 3.12"，不改写那两张决策表——同一套判据（能真跑 + 不引依赖）
