@@ -31,7 +31,7 @@
 | `__version__` | `0.1.1` | `src/browser_history_vault/__init__.py`（pyproject 以 dynamic 读取，无第二份） |
 | README 状态行 | `状态：已发布（v0.1.1）` | `tools/check_release.py` 的 `TAG_README` 项 |
 | `requires-python` | `>=3.12` | `pyproject.toml`；README「开发」同步 |
-| 目标提交 | ⬜ **tag 后回填**（tag 指向的提交 sha 在打 tag 那一刻才存在；写进 tag 树就是不动点自指） | `git rev-parse v0.1.1^{commit}`（登记在 §2） |
+| 目标提交 | ⬜ **tag 后回填**（tag 指向的提交 sha 在打 tag 那一刻才存在；写进 tag 树就是不动点自指） | `git rev-parse v0.1.1^{commit}`；**实测值登记在 §2.0**（`484cc483…`） |
 
 ### 1.2 本版改了什么（逐条附证据形式）
 
@@ -61,6 +61,9 @@
 
 > 样例件的 sha256 **可以**进 tag 树（它不指向任何附件自身的字节）：它由"冻结 fixtures + 两个注入时刻"
 > 完全决定，见 §1.4。
+>
+> **本表两格 ⬜ 的实际值已实测，登记在 §2.1**（tag 后事实栏）：tarball **480,830 B /
+> `d594b625…`**、`SHA256SUMS` **179 B**。这里保留 ⬜ 是 tag 树原文，不是"没做"。
 
 ### 1.4 样例件是**可逐字节复算**的（D5 的正面结论）
 
@@ -113,6 +116,9 @@ tag 时点实测的三件事：
 | 注解 | **Node 20 弃用：0 条**（改前 4 条）；另剩 1 条**由 GitHub 的 runner-images 自己**贴出的提示 `The ubuntu-latest label will migrate to Ubuntu 26 beginning October 19, 2026`——与本仓工作流无关，只有不再用 `ubuntu-latest`（钉死镜像版本）才会消失 |
 | 失败的第一次 run | `39369862999`（head `cb2c63e`）：双平台同红在 `tests/test_readme_gate.py::test_every_referenced_repo_path_exists`，`README 引用了不存在的路径：['C:\\bhvault-sample\\config.json']` |
 
+> **tag 之后（§2 栏）**：tag push run **`39371170942`**（head `484cc48`，2026-10-20T04:44:30Z，`head_branch = v0.1.1`）
+> 两腿 12/12 步 **success**；追加更正提交 `0aaccc2` 的 run **`39410882516`**（2026-10-20T10:51:34Z）同样两腿全 success。
+
 > **这条失败值得单独记**（"本机能跑 ≠ 别人能跑"的教科书形态）：README 把样例件的构建路径写成行内代码后，
 > 路径门把它当"仓库内路径"对账，而 `Path(REPO_ROOT) / "C:\\…"` 在 **Windows 上会把基路径整个替换掉**
 > → 该断言退化成"这台机器上有没有那个目录"：本机恰好有（那正是样例件的构建目录）就绿，CI 上没有就红。
@@ -122,32 +128,75 @@ tag 时点实测的三件事：
 ### 1.6 发布终态门禁
 
 ✅ tag 前实测（`tools/check_release.py .`，在线）：`0 FAIL / 1 WARN`，其中
-WARN = `POST_TAG`（此刻 HEAD 领先 `v0.1.0`，属正常开发中形态）；`TAG_*` / `EMAILS` / `TAGGER_EMAIL` /
+WARN = `POST_TAG`（那一刻 HEAD 领先 `v0.1.0`，属正常开发中形态）；`TAG_*` / `EMAILS` / `TAGGER_EMAIL` /
 `REMOTE_TAG` / `RELEASE_ASSETS` / `CLEAN_TREE` / `TRACKED_LEAK` 全 PASS。
-tag 之后重跑（HEAD == tag）应为 `0 FAIL / 0 WARN`，实测值见 Release 说明。
+
+tag 之后（head == tag `484cc48`）实测：**0 FAIL / 0 WARN / 11 PASS / 0 SKIP**（`POST_TAG` 变 PASS）。
+**之后又追加了 1 个更正提交**（见 §2.2），当前 HEAD 实测：**0 FAIL / 1 WARN / 10 PASS / 0 SKIP**，
+WARN = `POST_TAG`「1 个提交在 tag 之后……均为追加类」——本档 §2 开头即为该 WARN 要求的显式声明。
 
 ---
 
 ## 2. 发布后追加事实
 
-> **本版刻意保持 "tag == HEAD"**：核心验收要求 `git rev-list --count v0.1.1..HEAD` **为 0**。
-> 因此"tag 之后才成立"的事实（tag 指向的提交 sha、tag 对象 sha、tag push run id、
-> 三个附件的 sha256 与字节数、发布物复核结论）登记在 **Release 说明** 与 **tag 消息**里，
-> 而不是靠"tag 后再补一次提交"回填本档——那会让 `v0.1.1..HEAD` 立刻不为 0，
-> 也让"被 CI 验过的那个提交"不再是发布出去的提交。
+> **§2 就是"tag 后追加事实"的登记栏**（`check_release.py` 的 `POST_TAG` 项要求留档内**显式声明**
+> "tag 后追加事实另列"，否则读者会以为这是发布前就有的结论）。本版的实际形态是**混合**的：
 >
-> 这是 `plan/RELEASE-M6.md` 那套"两栏纪律"的一个**刻意变体**：那一版用 tag 后追加提交回填
-> （`POST_TAG` 给 WARN），本版选择"tag 即末次回填点"（`POST_TAG` 给 PASS）。
-> 两者都合法；判据始终是**读者能不能拿到正确结论**——所以下面两条都给出"去哪儿看"。
+> 1. **发布动作本身的事实**（tag 指向的提交 / tag 对象 / 附件 sha256 与字节数 / 发布物复核）
+>    写在 **Release 说明 `v0.1.1`** 与 **tag 消息**里——它们在打 tag 那一刻尚不存在，
+>    写进 tag 树就需要"tag 后再补提交"，会让 `v0.1.1..HEAD` ≠ 0；
+> 2. **发布后发现的更正**（§2.2：测试计数 423→424）必须靠 tag 后追加提交落盘——
+>    错值已经进了 tag 树与源码包附件，**不回填就等于让读者拿到错结论**，而"重写 tag"违反不可变纪律。
+>
+> 因此本版最终是 `v0.1.1..HEAD = 1`（1 个追加类提交），`POST_TAG` 给 **WARN**（不是 FAIL）。
+> 该 WARN 是**判据正确**：它提醒读者"tag 之后还有内容"，`git log --oneline v0.1.1..HEAD` 可逐条核对，
+> 那条提交只改两份文档的**数字与措辞**，**没有任何功能代码或用户面语义**变化。
+>
+> 与 `plan/RELEASE-M6.md` 同款两栏纪律的差别只在**比例**：那一版是"tag 后一批追加提交"，
+> 本版是"tag 前尽量回填 + tag 后仅 1 条更正"。
 
 ### 2.0 tag 与远端
 
-⬜ **登记处 = Release 说明 `v0.1.1`**（`git rev-parse v0.1.1^{commit}` / `git cat-file -t v0.1.1` /
-`gh api repos/yuluo554/browser-history-vault/git/ref/tags/v0.1.1`）。
-**v0.1.0 未动**：tag 对象 `e4310938…` → 提交 `1d25b04`，三个附件原样保留。
+| 项 | 值 |
+|---|---|
+| tag | `v0.1.1`（annotated） |
+| tag 指向提交 | `484cc4833a0ac9e8bec0ed43e17571cd2f407da7` |
+| tag 对象 sha | `2053a3bc4ea748139aca375f4b9896c34f23b9ac`（`git cat-file -t` = `tag`） |
+| 远端对象类型 | `tag`（`gh api .../git/ref/tags/v0.1.1` → `object.type = tag`；annotated 真到了远端，未被改写成轻量 tag） |
+| tagger 邮箱 | GitHub noreply（`TAGGER_EMAIL` PASS） |
+| **v0.1.0 未动** | tag 对象 `e4310938…` → 提交 `1d25b04`；三个附件原样保留（466,029 / 83,203 / 179 B） |
 
-### 2.1 附件与发布物复核
+### 2.1 附件与发布物复核（全部已执行）
 
-⬜ **登记处 = Release 说明 `v0.1.1`**：三个附件的 sha256 与字节数、`sha256sum -c SHA256SUMS` 结果、
-附件解包树 vs `git archive v0.1.1` 解包树 `diff -r` 结果。
-本版**样例件** `report.html` 的 sha256 属"不指向附件自身"的量，已登记在 §1.3 / §1.4（可进 tag 树）。
+| 附件 | 大小 | sha256（GitHub digest = 本地 `sha256sum` = `SHA256SUMS` 内两行） |
+|---|---|---|
+| `browser-history-vault-0.1.1.tar.gz` | **480,830 B** | `d594b6254021898045b99fed3f1cacd65448ff2d944fe4770d834be089f7b024` |
+| `report.html`（样例件） | **83,203 B** | `e7973618a5907ecb434b7dc6a54cec82208d912eb17f4b14f94e7d40e46c30db` |
+| `SHA256SUMS` | 179 B | （内含上述两行） |
+
+```
+$ gh release download v0.1.1 -D <临时> && sha256sum -c SHA256SUMS
+browser-history-vault-0.1.1.tar.gz: OK
+report.html: OK                                        exit 0
+$ cmp 下载件 本地构建件  →  TARBALL IDENTICAL / REPORT.HTML IDENTICAL
+$ diff -r <git archive v0.1.1 解包树> <附件解包树/browser-history-vault-0.1.1>  →  无差异
+$ git rev-list --count v0.1.1..HEAD  →  0（发布时；现为 1，见 §2.2）
+```
+
+发布 Tarball 的形态与 v0.1.0 一致：`git archive --format=tar --prefix=browser-history-vault-0.1.1/ v0.1.1 | gzip -9n`，
+同 tag 重复构建字节一致（实测 `cmp` IDENTICAL）。
+
+### 2.2 追加更正：测试计数 423 → 424（`0aaccc2`）
+
+| 项 | 值 |
+|---|---|
+| 提交 | `0aaccc2`：**追加事实更正：v0.1.1 的测试计数 423 → 424（tag 树里是错值，本提交留证并更正）** |
+| 错在哪 | `plan/RELEASE-M6.md` §2.9 初稿写「423 项（+5）」，实测 **424 = 418 + 6**——漏计了 CI 修复轮新增的 `test_readme_does_not_inline_absolute_paths` |
+| 为什么 tag 树里是错值 | 那一节写完后我又为 CI 红改了一轮测试，没回头改数字；`v0.1.1` 的树（**因此源码包附件**）带着错值 |
+| 证据 | `pytest --collect-only` → **424 tests collected**；`pytest` → **424 passed** |
+| 处置 | 该格改成「给算式 `418 + 6` + 指明现取命令」，并加"更正（tag 后补记）"段；**不改写 §1.9 的 418**（那是 v0.1.0 时点读数）；**不重写 tag**（不可变纪律） |
+| 为什么不补"计数门" | 本仓 `plan/01` 第 158 行明写"数字承诺为口径式、不写死测试数"；自指计数门每次加测试都要同步 README，与本仓既有口径冲突 → 选"算式 + 现取命令" |
+
+**这条更正的取舍**：它使 `v0.1.1..HEAD` 从 0 变成 1，与"核心验收要求为 0"相冲突。
+选择修正的理由是本仓自己的判据——**"读者会不会拿到错结论"优先于一个更漂亮的计数**；
+且 `POST_TAG` 对"追加类提交"本来就给 WARN（设计如此），不会把正常开发判红。
